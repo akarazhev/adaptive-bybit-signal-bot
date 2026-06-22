@@ -72,6 +72,24 @@ def test_settings_parse_symbols_and_credentials() -> None:
     assert settings.has_bybit_credentials
 
 
+def test_settings_parse_symbols_from_env_file(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("SYMBOLS=btcusdt, ethusdt\n", encoding="utf-8")
+
+    settings = Settings(**cast(Any, {"_env_file": env_file}))
+
+    assert settings.symbols == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_settings_parse_symbols_from_json_env_file(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text('SYMBOLS=["btcusdt", "ethusdt"]\n', encoding="utf-8")
+
+    settings = Settings(**cast(Any, {"_env_file": env_file}))
+
+    assert settings.symbols == ["BTCUSDT", "ETHUSDT"]
+
+
 def test_api_lists_health_signals_and_intents(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     app = create_app(settings)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from adaptive_bybit_bot.config import Settings
 from adaptive_bybit_bot.data.db import create_database_engine
@@ -13,14 +14,14 @@ from adaptive_bybit_bot.services.runtime import (
 )
 
 
-def _repo(tmp_path) -> BotRepository:
+def _repo(tmp_path: Path) -> BotRepository:
     engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
     repo = BotRepository(engine)
     repo.create_schema()
     return repo
 
 
-def test_service_heartbeat_upsert_and_staleness(tmp_path) -> None:
+def test_service_heartbeat_upsert_and_staleness(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     repo.upsert_service_heartbeat(
         service_name="ws-shadow",
@@ -48,7 +49,7 @@ def test_service_heartbeat_upsert_and_staleness(tmp_path) -> None:
     assert rows[0]["is_stale"] is False
 
 
-def test_strategy_lock_lease_and_takeover(tmp_path) -> None:
+def test_strategy_lock_lease_and_takeover(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     now = datetime.now(UTC)
     assert repo.acquire_strategy_lock(
@@ -75,7 +76,7 @@ def test_strategy_lock_lease_and_takeover(tmp_path) -> None:
     assert locks[0]["is_effectively_active"] is True
 
 
-def test_runtime_writer_filter_and_lock_helper(tmp_path) -> None:
+def test_runtime_writer_filter_and_lock_helper(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     settings = Settings(
         database_url=f"sqlite:///{tmp_path}/bot.db",

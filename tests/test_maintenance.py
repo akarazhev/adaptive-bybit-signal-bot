@@ -41,7 +41,7 @@ def test_sleep_with_heartbeat_emits_during_wait(
     async def fake_sleep(seconds: int) -> None:
         sleeps.append(seconds)
 
-    monkeypatch.setattr(maintenance.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr("adaptive_bybit_bot.services.maintenance.asyncio.sleep", fake_sleep)
 
     asyncio.run(
         maintenance._sleep_with_heartbeat(

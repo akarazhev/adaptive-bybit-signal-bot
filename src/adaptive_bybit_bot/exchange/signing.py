@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from collections.abc import Mapping
 from urllib.parse import urlencode
 
 
-def canonical_query(params: dict[str, object] | None) -> str:
+def canonical_query(params: Mapping[str, object] | None) -> str:
     if not params:
         return ""
     normalized = {key: str(value) for key, value in params.items() if value is not None}
@@ -18,7 +19,7 @@ def sign_get_request(
     api_key: str,
     secret: str,
     recv_window: int,
-    params: dict[str, object] | None,
+    params: Mapping[str, object] | None,
 ) -> str:
     """Create a Bybit V5 HMAC SHA256 signature for GET requests.
 

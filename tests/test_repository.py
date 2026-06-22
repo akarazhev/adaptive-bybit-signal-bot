@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from adaptive_bybit_bot.data.db import create_database_engine
 from adaptive_bybit_bot.data.repositories import BotRepository
@@ -8,7 +9,7 @@ from adaptive_bybit_bot.domain.enums import Regime, Side, SignalAction
 from adaptive_bybit_bot.domain.models import InstrumentSpec, SignalDecision
 
 
-def test_repository_order_intent_lifecycle(tmp_path) -> None:
+def test_repository_order_intent_lifecycle(tmp_path: Path) -> None:
     engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
     repo = BotRepository(engine)
     repo.create_schema()
@@ -36,7 +37,7 @@ def test_repository_order_intent_lifecycle(tmp_path) -> None:
     assert position.qty == 0.5
 
 
-def test_repository_persists_instrument_specs(tmp_path) -> None:
+def test_repository_persists_instrument_specs(tmp_path: Path) -> None:
     engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
     repo = BotRepository(engine)
     repo.create_schema()

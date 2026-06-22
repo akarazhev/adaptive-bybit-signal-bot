@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from adaptive_bybit_bot.backtesting import BacktestConfig, CandleBacktestRunner
 from adaptive_bybit_bot.backtesting.csv_io import read_candles_csv, write_candles_csv
@@ -51,11 +52,13 @@ def test_candle_backtest_runner_produces_metrics() -> None:
 
     assert result.candles == 300
     assert isinstance(result.final_quote_equity, float)
-    assert result.decision_count if hasattr(result, "decision_count") else len(result.decisions) > 0
-    assert result.as_dict()["decision_count"] > 0
+    assert result.decision_count > 0
+    summary = result.as_dict()
+    assert isinstance(summary["decision_count"], int)
+    assert summary["decision_count"] > 0
 
 
-def test_candle_csv_round_trip(tmp_path) -> None:
+def test_candle_csv_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "candles.csv"
     candles = make_candles(5)
     write_candles_csv(path, candles)
@@ -64,7 +67,7 @@ def test_candle_csv_round_trip(tmp_path) -> None:
     assert loaded[0].close == candles[0].close
 
 
-def test_repository_can_persist_backtest_result(tmp_path) -> None:
+def test_repository_can_persist_backtest_result(tmp_path: Path) -> None:
     from adaptive_bybit_bot.data.db import create_database_engine
     from adaptive_bybit_bot.data.repositories import BotRepository
 

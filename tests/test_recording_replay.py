@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,7 +31,7 @@ def _ms(dt: datetime) -> int:
     return int(dt.timestamp() * 1000)
 
 
-def _orderbook_payload(ts: datetime) -> dict:
+def _orderbook_payload(ts: datetime) -> dict[str, Any]:
     return {
         "topic": "orderbook.50.BTCUSDT",
         "type": "snapshot",
@@ -44,7 +46,7 @@ def _orderbook_payload(ts: datetime) -> dict:
     }
 
 
-def _trade_payload(ts: datetime, price: float = 100.0) -> dict:
+def _trade_payload(ts: datetime, price: float = 100.0) -> dict[str, Any]:
     return {
         "topic": "publicTrade.BTCUSDT",
         "type": "snapshot",
@@ -84,7 +86,7 @@ def _decision(
     )
 
 
-def test_recorded_market_event_jsonl_roundtrip(tmp_path) -> None:
+def test_recorded_market_event_jsonl_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "session.jsonl.gz"
     ts = datetime(2026, 1, 1, tzinfo=UTC)
     event = RecordedMarketEvent.from_ws_payload(_trade_payload(ts), recorded_at=ts, sequence=1)
@@ -134,7 +136,7 @@ def test_recorded_market_event_normalizes_payload_variants() -> None:
     assert parsed.payload == {}
 
 
-def test_recording_helpers_build_topics_and_paths(tmp_path) -> None:
+def test_recording_helpers_build_topics_and_paths(tmp_path: Path) -> None:
     started_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
     assert recording_topics([" btcusdt ", "", "ethusdt"], depth=1) == [
@@ -158,14 +160,14 @@ def test_recording_helpers_build_topics_and_paths(tmp_path) -> None:
 
 
 def test_record_market_forever_persists_finite_stream(
-    tmp_path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeWsClient:
         def __init__(self, **kwargs: Any) -> None:
             self.kwargs = kwargs
 
-        async def stream(self, topics: list[str]):
+        async def stream(self, topics: list[str]) -> AsyncIterator[dict[str, Any]]:
             assert "publicTrade.BTCUSDT" in topics
             ts = datetime(2026, 1, 1, tzinfo=UTC)
             yield _orderbook_payload(ts)
@@ -199,7 +201,7 @@ def test_record_market_forever_persists_finite_stream(
     assert repository.list_service_heartbeats(limit=1)[0]["status"] == "finished"
 
 
-def test_repository_persists_market_recording_and_replay(tmp_path) -> None:
+def test_repository_persists_market_recording_and_replay(tmp_path: Path) -> None:
     engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
     repo = BotRepository(engine)
     repo.create_schema()
@@ -418,7 +420,7 @@ def test_replay_fill_model_buys_and_sells_against_recorded_trades() -> None:
         )
 
 
-def test_market_replay_runner_processes_synthetic_ws_recording(tmp_path) -> None:
+def test_market_replay_runner_processes_synthetic_ws_recording(tmp_path: Path) -> None:
     path = tmp_path / "synthetic.jsonl.gz"
     start = datetime(2026, 1, 1, tzinfo=UTC)
     with JsonlMarketEventWriter(path) as writer:

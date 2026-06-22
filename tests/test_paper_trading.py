@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -22,7 +23,7 @@ def _candle(ts: datetime, close: float = 100.0) -> Candle:
     return Candle(ts=ts, open=close, high=close + 1, low=close - 1, close=close, volume=10)
 
 
-def test_paper_fill_marks_active_intent_and_updates_position(tmp_path) -> None:
+def test_paper_fill_marks_active_intent_and_updates_position(tmp_path: Path) -> None:
     engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
     repo = BotRepository(engine)
     repo.create_schema()
@@ -68,7 +69,7 @@ def test_paper_fill_marks_active_intent_and_updates_position(tmp_path) -> None:
     assert repo.list_paper_fills(limit=5)[0]["order_intent_id"] == intent_id
 
 
-def test_paper_fill_partial_threshold_keeps_remaining_intent_active(tmp_path) -> None:
+def test_paper_fill_partial_threshold_keeps_remaining_intent_active(tmp_path: Path) -> None:
     engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
     repo = BotRepository(engine)
     repo.create_schema()

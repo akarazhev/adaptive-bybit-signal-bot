@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from typing import Annotated
 from uuid import uuid4
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
     # "ws-shadow" to make only that service write strategy signals/intents.
     strategy_writer_service: str = "any"
 
-    symbols: list[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
+    symbols: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
     poll_interval_seconds: int = 10
     kline_interval: str = "1"
     kline_limit: int = 240
@@ -117,7 +118,14 @@ class Settings(BaseSettings):
     @classmethod
     def parse_symbols(cls, value: object) -> list[str]:
         if isinstance(value, str):
-            return [item.strip().upper() for item in value.split(",") if item.strip()]
+            stripped_value = value.strip()
+            if stripped_value.startswith("["):
+                try:
+                    decoded_value = json.loads(stripped_value)
+                except json.JSONDecodeError as error:
+                    raise ValueError("symbols must be valid JSON or comma-separated") from error
+                return cls.parse_symbols(decoded_value)
+            return [item.strip().upper() for item in stripped_value.split(",") if item.strip()]
         if isinstance(value, list):
             return [str(item).strip().upper() for item in value]
         raise TypeError("symbols must be a comma-separated string or list")

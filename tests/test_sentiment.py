@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import httpx
 
 from adaptive_bybit_bot.data.db import create_database_engine
 from adaptive_bybit_bot.data.repositories import BotRepository
 from adaptive_bybit_bot.domain.enums import Regime, SignalAction
-from adaptive_bybit_bot.domain.models import FearGreedContext, FearGreedValue, PositionState
+from adaptive_bybit_bot.domain.models import (
+    FearGreedContext,
+    FearGreedValue,
+    FeatureSet,
+    PositionState,
+)
 from adaptive_bybit_bot.sentiment.alternative_me import AlternativeMeFearGreedClient
 from adaptive_bybit_bot.sentiment.policy import FearGreedPolicyConfig, FearGreedSentimentPolicy
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment
@@ -16,10 +23,8 @@ from adaptive_bybit_bot.strategy.risk import RiskConfig
 from adaptive_bybit_bot.strategy.strategy import StrategyEngine
 
 
-def make_features(**overrides: object):
-    from adaptive_bybit_bot.domain.models import FeatureSet
-
-    base = dict(
+def make_features(**overrides: object) -> FeatureSet:
+    base: dict[str, Any] = dict(
         symbol="BTCUSDT",
         ts=datetime.now(UTC),
         last_price=100.0,
@@ -87,7 +92,7 @@ def test_alternative_me_client_parses_fng_response() -> None:
     asyncio.run(_run())
 
 
-def test_repository_persists_fear_greed_context(tmp_path) -> None:
+def test_repository_persists_fear_greed_context(tmp_path: Path) -> None:
     engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
     repo = BotRepository(engine)
     repo.create_schema()

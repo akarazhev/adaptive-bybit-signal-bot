@@ -19,10 +19,17 @@ from adaptive_bybit_bot.strategy.risk import RiskConfig
 
 
 class ActiveIntentLike(Protocol):
-    id: str
-    side: str
-    limit_price: float
-    qty: float
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def side(self) -> str: ...
+
+    @property
+    def limit_price(self) -> float: ...
+
+    @property
+    def qty(self) -> float: ...
 
 
 class StrategyEngine:
