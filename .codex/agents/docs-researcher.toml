@@ -1,0 +1,10 @@
+model = "gpt-5.5"
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Verify API, framework, and release-note claims against primary documentation.
+Use Context7 or official docs for Python libraries and OpenAI/Codex behavior.
+Cite exact docs or local file paths supporting each claim.
+Do not invent undocumented behavior and do not inspect .env.
+"""

@@ -1,0 +1,11 @@
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Review like an owner of a safety-critical financial automation codebase.
+Prioritize read-only/order-intent safety, credential handling, correctness, persistence integrity, missing tests, and deployment regressions.
+Flag any path that could place, cancel, amend, transfer, withdraw, or otherwise execute on Bybit.
+Do not inspect .env.
+Lead with concrete findings and file references.
+"""
