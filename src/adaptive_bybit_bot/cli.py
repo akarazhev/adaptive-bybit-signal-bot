@@ -15,9 +15,15 @@ from adaptive_bybit_bot.config import Settings, get_settings
 from adaptive_bybit_bot.data.db import create_database_engine, create_schema
 from adaptive_bybit_bot.data.repositories import BotRepository
 from adaptive_bybit_bot.exchange.bybit_client import BybitRestClient
+from adaptive_bybit_bot.exchange.bybit_ws import BybitPublicWebSocketClient
 from adaptive_bybit_bot.logging_config import configure_logging
 from adaptive_bybit_bot.services.account_sync import sync_account_once, validate_read_only_key
-from adaptive_bybit_bot.services.market_loop import run_forever, run_symbol_once
+from adaptive_bybit_bot.services.market_loop import (
+    refresh_instruments_once,
+    run_forever,
+    run_paper_fill_once,
+    run_symbol_once,
+)
 
 app = typer.Typer(no_args_is_help=True, help="Adaptive Bybit spot signal/order-intent bot.")
 console = Console()
@@ -107,6 +113,80 @@ def run(
     asyncio.run(_run())
 
 
+@app.command("refresh-instruments")
+def refresh_instruments(
+    symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+) -> None:
+    """Fetch and persist Bybit spot instruments-info for configured symbols."""
+    settings = _settings()
+    repository = _repo(settings)
+    selected_symbols = _parse_symbols(symbols, settings)
+
+    async def _run() -> None:
+        async with BybitRestClient(base_url=settings.bybit_base_url) as client:
+            specs = await refresh_instruments_once(
+                repository=repository,
+                client=client,
+                symbols=selected_symbols,
+            )
+            _print_json([spec.as_dict() for spec in specs])
+
+    asyncio.run(_run())
+
+
+@app.command("list-instruments")
+def list_instruments(limit: Annotated[int, typer.Option(help="Rows to show")] = 100) -> None:
+    """Show persisted exchange instrument constraints."""
+    settings = _settings()
+    repository = _repo(settings)
+    rows = repository.list_instrument_specs(limit=limit)
+    table = Table(title="Instrument specs")
+    for column in [
+        "symbol",
+        "status",
+        "tick",
+        "qty_step",
+        "min_amount",
+        "min_qty",
+        "max_limit_qty",
+        "updated_at",
+    ]:
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            str(row["symbol"]),
+            str(row["status"]),
+            str(row["price_tick_size"]),
+            str(row["qty_step"]),
+            str(row["min_order_amount"]),
+            str(row["min_order_qty"]),
+            str(row["max_limit_order_qty"]),
+            str(row["updated_at"]),
+        )
+    console.print(table)
+
+
+@app.command("paper-fill-once")
+def paper_fill_once(
+    symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
+) -> None:
+    """Apply paper fill simulation to active intents using current public market data."""
+    settings = _settings()
+    repository = _repo(settings)
+
+    async def _run() -> None:
+        async with BybitRestClient(base_url=settings.bybit_base_url) as client:
+            fills = await run_paper_fill_once(
+                settings=settings,
+                repository=repository,
+                client=client,
+                symbol=symbol.upper(),
+            )
+            _print_json([fill.as_dict() for fill in fills])
+
+    asyncio.run(_run())
+
+
 @app.command("validate-key")
 def validate_key() -> None:
     """Validate that the configured API key is read-only."""
@@ -152,6 +232,62 @@ def sync_account(
     asyncio.run(_run())
 
 
+@app.command("instrument-info")
+def instrument_info(
+    symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
+) -> None:
+    """Fetch Bybit spot instrument filters: tick size, lot step and minimum notional."""
+    settings = _settings()
+
+    async def _run() -> None:
+        async with BybitRestClient(
+            base_url=settings.bybit_base_url,
+            api_key=settings.bybit_api_key,
+            api_secret=settings.bybit_api_secret,
+            recv_window=settings.bybit_recv_window,
+        ) as client:
+            info = await client.get_instrument_info(symbol.upper(), category="spot")
+            _print_json(info.as_dict())
+
+    asyncio.run(_run())
+
+
+@app.command("ws-print")
+def ws_print(
+    symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+    seconds: Annotated[int, typer.Option(help="Seconds to stream; 0 means forever")] = 30,
+    orderbook_depth: Annotated[
+        int,
+        typer.Option(help="Public orderbook depth topic, e.g. 1/50/200/1000"),
+    ] = 1,
+) -> None:
+    """Print public Bybit spot WebSocket messages for tickers, trades and orderbook."""
+    settings = _settings()
+    selected_symbols = _parse_symbols(symbols, settings)
+    topics: list[str] = []
+    for item in selected_symbols:
+        topics.extend(
+            [f"tickers.{item}", f"publicTrade.{item}", f"orderbook.{orderbook_depth}.{item}"]
+        )
+
+    async def _consume() -> None:
+        client = BybitPublicWebSocketClient(url=settings.bybit_public_ws_spot_url)
+        async for payload in client.stream(topics):
+            _print_json(payload)
+
+    async def _run() -> None:
+        if seconds <= 0:
+            await _consume()
+            return
+        try:
+            async with asyncio.timeout(seconds):
+                await _consume()
+        except TimeoutError:
+            console.print(f"Stopped after {seconds} seconds")
+
+    asyncio.run(_run())
+
+
 @app.command("list-intents")
 def list_intents(limit: Annotated[int, typer.Option(help="Rows to show")] = 20) -> None:
     """Show recent order intents."""
@@ -182,6 +318,22 @@ def list_signals(limit: Annotated[int, typer.Option(help="Rows to show")] = 20) 
     _print_json(repository.list_recent_signals(limit=limit))
 
 
+@app.command("list-paper-fills")
+def list_paper_fills(limit: Annotated[int, typer.Option(help="Rows to show")] = 20) -> None:
+    """Show recent paper fills."""
+    settings = _settings()
+    repository = _repo(settings)
+    _print_json(repository.list_recent_paper_fills(limit=limit))
+
+
+@app.command("list-positions")
+def list_positions(limit: Annotated[int, typer.Option(help="Rows to show")] = 20) -> None:
+    """Show local positions created by manual or paper fill confirmations."""
+    settings = _settings()
+    repository = _repo(settings)
+    _print_json(repository.list_positions(limit=limit))
+
+
 @app.command("mark-filled")
 def mark_filled(
     intent_id: Annotated[str, typer.Option(help="Order intent id")],
@@ -204,8 +356,10 @@ def api(
     import uvicorn
 
     settings = _settings()
-    # Create database path before uvicorn imports the app.
-    Path(settings.database_url.replace("sqlite:///", "")).parent.mkdir(parents=True, exist_ok=True)
+    # Create SQLite database path before uvicorn imports the app.
+    if settings.database_url.startswith("sqlite:///"):
+        sqlite_path = settings.database_url.replace("sqlite:///", "", 1)
+        Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
     uvicorn.run(create_app(settings), host=host, port=port)
 
 

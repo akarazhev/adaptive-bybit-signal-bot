@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -11,6 +11,7 @@ from adaptive_bybit_bot.domain.enums import Side
 from adaptive_bybit_bot.domain.models import (
     Candle,
     DerivativesContext,
+    InstrumentSpec,
     MarketSnapshot,
     OrderBook,
     OrderBookLevel,
@@ -69,6 +70,7 @@ class BybitRestClient:
         self.recv_window = recv_window
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout)
+        self._instrument_cache: dict[tuple[str, str], InstrumentSpec] = {}
 
     async def __aenter__(self) -> BybitRestClient:
         return self
@@ -123,6 +125,53 @@ class BybitRestClient:
             )
         return payload
 
+    async def get_instruments_info(
+        self,
+        *,
+        category: str = "spot",
+        symbol: str | None = None,
+        use_cache: bool = True,
+    ) -> list[InstrumentSpec]:
+        if use_cache and symbol is not None:
+            cached = self._instrument_cache.get((category, symbol.upper()))
+            if cached is not None:
+                return [cached]
+
+        payload = await self._get(
+            "/v5/market/instruments-info",
+            {"category": category, "symbol": symbol},
+        )
+        rows = payload.get("result", {}).get("list", [])
+        instruments: list[InstrumentSpec] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            instrument = self._parse_instrument_spec(
+                row,
+                category=category,
+                requested_symbol=symbol or "",
+            )
+            instruments.append(instrument)
+            self._instrument_cache[(category, instrument.symbol)] = instrument
+        return instruments
+
+    async def get_instrument_info(
+        self,
+        symbol: str,
+        *,
+        category: str = "spot",
+        use_cache: bool = True,
+    ) -> InstrumentSpec:
+        instruments = await self.get_instruments_info(
+            category=category,
+            symbol=symbol,
+            use_cache=use_cache,
+        )
+        for instrument in instruments:
+            if instrument.symbol == symbol.upper():
+                return instrument
+        raise BybitApiError(f"instrument not found: {category}/{symbol}")
+
     async def get_klines(
         self,
         symbol: str,
@@ -172,8 +221,12 @@ class BybitRestClient:
         symbol: str,
         *,
         category: str = "spot",
-        limit: int = 100,
+        limit: int = 60,
     ) -> list[Trade]:
+        # Bybit V5 limits recent public trades for spot to 1..60.
+        # Clamp locally so a permissive user config does not break the whole cycle.
+        if category == "spot":
+            limit = min(max(limit, 1), 60)
         payload = await self._get(
             "/v5/market/recent-trade",
             {"category": category, "symbol": symbol, "limit": limit},
@@ -231,7 +284,7 @@ class BybitRestClient:
         kline_interval: str = "1",
         kline_limit: int = 240,
         orderbook_limit: int = 50,
-        recent_trades_limit: int = 100,
+        recent_trades_limit: int = 60,
         include_derivatives_context: bool = True,
     ) -> MarketSnapshot:
         candles = await self.get_klines(symbol, interval=kline_interval, limit=kline_limit)
@@ -285,7 +338,10 @@ class BybitRestClient:
         return _result_dict(payload)
 
     async def get_open_orders(
-        self, symbol: str | None = None, *, category: str = "spot"
+        self,
+        symbol: str | None = None,
+        *,
+        category: str = "spot",
     ) -> dict[str, Any]:
         payload = await self._get(
             "/v5/order/realtime",
@@ -307,6 +363,54 @@ class BybitRestClient:
             signed=True,
         )
         return _result_dict(payload)
+
+    @staticmethod
+    def _parse_instrument_spec(
+        row: dict[str, Any],
+        *,
+        category: str,
+        requested_symbol: str,
+    ) -> InstrumentSpec:
+        lot_raw = row.get("lotSizeFilter")
+        price_filter_raw = row.get("priceFilter")
+        lot = cast(dict[str, Any], lot_raw) if isinstance(lot_raw, dict) else {}
+        price_filter = (
+            cast(dict[str, Any], price_filter_raw) if isinstance(price_filter_raw, dict) else {}
+        )
+        base_precision = _to_float(lot.get("basePrecision"), 0.0) or None
+        quote_precision = _to_float(lot.get("quotePrecision"), 0.0) or None
+        qty_step = _to_float(lot.get("qtyStep"), 0.0) or base_precision or 0.000001
+        min_order_amount = (
+            _to_float(lot.get("minOrderAmt"), 0.0)
+            or _to_float(lot.get("minNotionalValue"), 0.0)
+            or None
+        )
+        max_limit_order_qty = (
+            _to_float(lot.get("maxLimitOrderQty"), 0.0)
+            or _to_float(lot.get("maxOrderQty"), 0.0)
+            or None
+        )
+        max_market_order_qty = (
+            _to_float(lot.get("maxMarketOrderQty"), 0.0)
+            or _to_float(lot.get("maxMktOrderQty"), 0.0)
+            or None
+        )
+        return InstrumentSpec(
+            symbol=str(row.get("symbol") or requested_symbol).upper(),
+            category=category,
+            status=str(row.get("status") or ""),
+            base_coin=str(row.get("baseCoin") or "") or None,
+            quote_coin=str(row.get("quoteCoin") or "") or None,
+            price_tick_size=_to_float(price_filter.get("tickSize"), 0.01) or 0.01,
+            qty_step=qty_step,
+            min_order_qty=_to_float(lot.get("minOrderQty"), 0.0) or None,
+            min_order_amount_quote=min_order_amount,
+            max_limit_order_qty=max_limit_order_qty,
+            max_market_order_qty=max_market_order_qty,
+            base_precision=base_precision,
+            quote_precision=quote_precision,
+            raw=row,
+        )
 
     @staticmethod
     def _parse_levels(raw_levels: object) -> list[OrderBookLevel]:

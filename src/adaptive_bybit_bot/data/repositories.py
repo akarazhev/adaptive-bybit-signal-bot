@@ -10,15 +10,22 @@ from adaptive_bybit_bot.data.db import create_schema, session_scope
 from adaptive_bybit_bot.data.models import (
     AccountSnapshotRecord,
     ExecutionRecord,
+    InstrumentSpecRecord,
     MarketFeatureRecord,
     MarketRegimeRecord,
     OrderEventRecord,
     OrderIntentRecord,
+    PaperFillRecord,
     PositionRecord,
     SignalRecord,
 )
 from adaptive_bybit_bot.domain.enums import OrderIntentStatus, PositionStatus, Side, SignalAction
-from adaptive_bybit_bot.domain.models import FeatureSet, PositionState, SignalDecision
+from adaptive_bybit_bot.domain.models import (
+    FeatureSet,
+    InstrumentSpec,
+    PositionState,
+    SignalDecision,
+)
 
 
 def _now() -> datetime:
@@ -44,13 +51,65 @@ def _json_safe(value: Any) -> Any:
 
 
 class BotRepository:
-    """Repository layer for market features, signals, order intents and positions."""
+    """Repository layer for features, signals, order intents, instruments and positions."""
 
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
 
     def create_schema(self) -> None:
         create_schema(self.engine)
+
+    def save_instrument_spec(self, spec: InstrumentSpec) -> str:
+        with session_scope(self.engine) as session:
+            record = InstrumentSpecRecord(
+                symbol=spec.symbol,
+                category=spec.category,
+                status=spec.status,
+                base_coin=spec.base_coin,
+                quote_coin=spec.quote_coin,
+                price_tick_size=spec.price_tick_size,
+                qty_step=spec.qty_step,
+                min_order_qty=spec.min_order_qty,
+                min_order_amount_quote=spec.min_order_amount_quote,
+                max_limit_order_qty=spec.max_limit_order_qty,
+                max_market_order_qty=spec.max_market_order_qty,
+                base_precision=spec.base_precision,
+                quote_precision=spec.quote_precision,
+                raw_json=_json_safe(spec.raw),
+            )
+            session.add(record)
+            session.flush()
+            return record.id
+
+    def get_latest_instrument_spec(
+        self,
+        symbol: str,
+        *,
+        category: str = "spot",
+    ) -> InstrumentSpec | None:
+        with session_scope(self.engine) as session:
+            record = session.execute(
+                select(InstrumentSpecRecord)
+                .where(
+                    InstrumentSpecRecord.symbol == symbol.upper(),
+                    InstrumentSpecRecord.category == category,
+                )
+                .order_by(desc(InstrumentSpecRecord.ts))
+                .limit(1)
+            ).scalars().first()
+            if record is None:
+                return None
+            return _instrument_spec_from_record(record)
+
+    def list_recent_instrument_specs(self, limit: int = 20) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            rows = session.execute(
+                select(InstrumentSpecRecord).order_by(desc(InstrumentSpecRecord.ts)).limit(limit)
+            ).scalars().all()
+            return [_instrument_spec_record_to_dict(row) for row in rows]
+
+    def list_instrument_specs(self, limit: int = 20) -> list[dict[str, Any]]:
+        return self.list_recent_instrument_specs(limit=limit)
 
     def save_feature_set(self, features: FeatureSet, *, version: str = "v1") -> str:
         with session_scope(self.engine) as session:
@@ -91,7 +150,7 @@ class BotRepository:
             return decision.id
 
     def apply_signal(self, decision: SignalDecision, *, strategy_version: str = "v1") -> str | None:
-        """Persist a decision and mutate intent state if needed.
+        """Persist a decision and mutate local intent state.
 
         Returns the affected or created order_intent id for actionable decisions, else None.
         """
@@ -124,7 +183,10 @@ class BotRepository:
                         signal_id=decision.id,
                         event_type="CREATED",
                         new_price=decision.price,
-                        reason_json={"reason": decision.reason, "metadata": decision.metadata},
+                        reason_json={
+                            "reason": decision.reason,
+                            "metadata": _json_safe(decision.metadata),
+                        },
                     )
                 )
                 return intent.id
@@ -207,9 +269,9 @@ class BotRepository:
 
     def active_intent(self, symbol: str, side: Side | None = None) -> OrderIntentRecord | None:
         with session_scope(self.engine) as session:
-            record = (
-                session.execute(self._active_intent_query(symbol, side).limit(1)).scalars().first()
-            )
+            record = session.execute(
+                self._active_intent_query(symbol, side).limit(1)
+            ).scalars().first()
             if record is not None:
                 session.expunge(record)
             return record
@@ -256,49 +318,77 @@ class BotRepository:
         fill_price: float,
         fill_qty: float,
         filled_at: datetime | None = None,
+        source: str = "manual",
+        reason: dict[str, Any] | None = None,
     ) -> None:
+        if fill_qty <= 0:
+            raise ValueError("fill_qty must be positive")
         filled_at = filled_at or _now()
+        reason = reason or {}
         with session_scope(self.engine) as session:
             intent = session.get(OrderIntentRecord, intent_id)
             if intent is None:
                 raise ValueError(f"order intent not found: {intent_id}")
-            intent.status = OrderIntentStatus.FILLED.value
-            intent.filled_at = filled_at
+            applied_fill_qty = min(fill_qty, intent.qty) if source == "paper" else fill_qty
+            remaining_qty = max(intent.qty - applied_fill_qty, 0.0)
+            is_partial_paper_fill = source == "paper" and remaining_qty > 1e-12
+            if is_partial_paper_fill:
+                intent.qty = remaining_qty
+            else:
+                intent.status = OrderIntentStatus.FILLED.value
+                intent.filled_at = filled_at
             intent.fill_price = fill_price
-            intent.fill_qty = fill_qty
+            intent.fill_qty = applied_fill_qty
+            if source == "paper":
+                event_type = "PAPER_PARTIAL_FILLED" if is_partial_paper_fill else "PAPER_FILLED"
+            else:
+                event_type = "FILLED_CONFIRMED"
             session.add(
                 OrderEventRecord(
                     order_intent_id=intent.id,
-                    event_type="FILLED_CONFIRMED",
+                    event_type=event_type,
                     old_price=intent.limit_price,
                     new_price=fill_price,
-                    reason_json={"fill_qty": fill_qty},
+                    reason_json={
+                        "fill_qty": applied_fill_qty,
+                        "remaining_qty": remaining_qty,
+                        "source": source,
+                        **_json_safe(reason),
+                    },
                 )
             )
+            if source == "paper":
+                session.add(
+                    PaperFillRecord(
+                        ts=filled_at,
+                        order_intent_id=intent.id,
+                        symbol=intent.symbol,
+                        side=intent.side,
+                        fill_price=fill_price,
+                        fill_qty=applied_fill_qty,
+                        reason_json=_json_safe(reason),
+                    )
+                )
             self._apply_fill_to_position(
                 session,
                 symbol=intent.symbol,
                 side=Side(intent.side),
                 price=fill_price,
-                qty=fill_qty,
+                qty=applied_fill_qty,
                 ts=filled_at,
             )
 
     def get_position_state(self, symbol: str) -> PositionState:
         with session_scope(self.engine) as session:
-            record = (
-                session.execute(
-                    select(PositionRecord)
-                    .where(
-                        PositionRecord.symbol == symbol,
-                        PositionRecord.status == PositionStatus.OPEN.value,
-                    )
-                    .order_by(desc(PositionRecord.opened_at))
-                    .limit(1)
+            record = session.execute(
+                select(PositionRecord)
+                .where(
+                    PositionRecord.symbol == symbol,
+                    PositionRecord.status == PositionStatus.OPEN.value,
                 )
-                .scalars()
-                .first()
-            )
+                .order_by(desc(PositionRecord.opened_at))
+                .limit(1)
+            ).scalars().first()
             if record is None:
                 return PositionState(symbol=symbol)
             return PositionState(
@@ -308,17 +398,31 @@ class BotRepository:
                 opened_at=record.opened_at,
             )
 
+    def list_positions(self, limit: int = 20) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            rows = session.execute(
+                select(PositionRecord).order_by(desc(PositionRecord.updated_at)).limit(limit)
+            ).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "symbol": row.symbol,
+                    "qty": row.qty,
+                    "avg_entry": row.avg_entry,
+                    "status": row.status,
+                    "opened_at": row.opened_at.isoformat() if row.opened_at else None,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                    "closed_at": row.closed_at.isoformat() if row.closed_at else None,
+                    "realized_pnl": row.realized_pnl,
+                }
+                for row in rows
+            ]
+
     def list_recent_intents(self, limit: int = 20) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = (
-                session.execute(
-                    select(OrderIntentRecord)
-                    .order_by(desc(OrderIntentRecord.created_at))
-                    .limit(limit)
-                )
-                .scalars()
-                .all()
-            )
+            rows = session.execute(
+                select(OrderIntentRecord).order_by(desc(OrderIntentRecord.created_at)).limit(limit)
+            ).scalars().all()
             return [
                 {
                     "id": row.id,
@@ -339,11 +443,9 @@ class BotRepository:
 
     def list_recent_signals(self, limit: int = 20) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = (
-                session.execute(select(SignalRecord).order_by(desc(SignalRecord.ts)).limit(limit))
-                .scalars()
-                .all()
-            )
+            rows = session.execute(
+                select(SignalRecord).order_by(desc(SignalRecord.ts)).limit(limit)
+            ).scalars().all()
             return [
                 {
                     "id": row.id,
@@ -362,6 +464,29 @@ class BotRepository:
                 for row in rows
             ]
 
+    def list_paper_fills(self, limit: int = 20) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            rows = session.execute(
+                select(PaperFillRecord).order_by(desc(PaperFillRecord.ts)).limit(limit)
+            ).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "ts": row.ts.isoformat() if row.ts else None,
+                    "order_intent_id": row.order_intent_id,
+                    "symbol": row.symbol,
+                    "side": row.side,
+                    "fill_price": row.fill_price,
+                    "fill_qty": row.fill_qty,
+                    "reason": row.reason_json,
+                }
+                for row in rows
+            ]
+
+    def list_recent_paper_fills(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Backward-compatible alias used by the CLI/API layer."""
+        return self.list_paper_fills(limit=limit)
+
     def save_account_snapshot(self, *, kind: str, payload: dict[str, Any]) -> str:
         with session_scope(self.engine) as session:
             record = AccountSnapshotRecord(kind=kind, payload_json=_json_safe(payload))
@@ -379,13 +504,9 @@ class BotRepository:
                 exec_id = str(row.get("execId") or row.get("exec_id") or "")
                 if not exec_id:
                     continue
-                exists = (
-                    session.execute(
-                        select(ExecutionRecord).where(ExecutionRecord.exec_id == exec_id).limit(1)
-                    )
-                    .scalars()
-                    .first()
-                )
+                exists = session.execute(
+                    select(ExecutionRecord).where(ExecutionRecord.exec_id == exec_id).limit(1)
+                ).scalars().first()
                 if exists:
                     continue
                 record = ExecutionRecord(
@@ -405,7 +526,10 @@ class BotRepository:
 
     @staticmethod
     def _insert_signal(
-        session: Session, decision: SignalDecision, *, strategy_version: str
+        session: Session,
+        decision: SignalDecision,
+        *,
+        strategy_version: str,
     ) -> None:
         record = SignalRecord(
             id=decision.id,
@@ -427,7 +551,8 @@ class BotRepository:
 
     @staticmethod
     def _active_intent_query(
-        symbol: str, side: Side | None = None
+        symbol: str,
+        side: Side | None = None,
     ) -> Select[tuple[OrderIntentRecord]]:
         stmt = select(OrderIntentRecord).where(
             OrderIntentRecord.symbol == symbol,
@@ -447,19 +572,15 @@ class BotRepository:
         qty: float,
         ts: datetime,
     ) -> None:
-        position = (
-            session.execute(
-                select(PositionRecord)
-                .where(
-                    PositionRecord.symbol == symbol,
-                    PositionRecord.status == PositionStatus.OPEN.value,
-                )
-                .order_by(desc(PositionRecord.opened_at))
-                .limit(1)
+        position = session.execute(
+            select(PositionRecord)
+            .where(
+                PositionRecord.symbol == symbol,
+                PositionRecord.status == PositionStatus.OPEN.value,
             )
-            .scalars()
-            .first()
-        )
+            .order_by(desc(PositionRecord.opened_at))
+            .limit(1)
+        ).scalars().first()
 
         if side == Side.BUY:
             if position is None:
@@ -499,3 +620,42 @@ def _parse_ms(value: Any) -> datetime:
         return datetime.fromtimestamp(int(value) / 1000, tz=UTC)
     except (TypeError, ValueError, OSError):
         return _now()
+
+
+def _instrument_spec_from_record(record: InstrumentSpecRecord) -> InstrumentSpec:
+    return InstrumentSpec(
+        symbol=record.symbol,
+        category=record.category,
+        status=record.status,
+        base_coin=record.base_coin,
+        quote_coin=record.quote_coin,
+        price_tick_size=record.price_tick_size,
+        qty_step=record.qty_step,
+        min_order_qty=record.min_order_qty,
+        min_order_amount_quote=record.min_order_amount_quote,
+        max_limit_order_qty=record.max_limit_order_qty,
+        max_market_order_qty=record.max_market_order_qty,
+        base_precision=record.base_precision,
+        quote_precision=record.quote_precision,
+        raw=record.raw_json or {},
+    )
+
+
+def _instrument_spec_record_to_dict(row: InstrumentSpecRecord) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "ts": row.ts.isoformat() if row.ts else None,
+        "updated_at": row.ts.isoformat() if row.ts else None,
+        "symbol": row.symbol,
+        "category": row.category,
+        "status": row.status,
+        "base_coin": row.base_coin,
+        "quote_coin": row.quote_coin,
+        "price_tick_size": row.price_tick_size,
+        "qty_step": row.qty_step,
+        "min_order_qty": row.min_order_qty,
+        "min_order_amount_quote": row.min_order_amount_quote,
+        "min_order_amount": row.min_order_amount_quote,
+        "max_limit_order_qty": row.max_limit_order_qty,
+        "max_market_order_qty": row.max_market_order_qty,
+    }

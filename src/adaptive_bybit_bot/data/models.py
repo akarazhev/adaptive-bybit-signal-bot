@@ -41,6 +41,27 @@ class MarketRegimeRecord(Base):
     explanation_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class InstrumentSpecRecord(Base):
+    __tablename__ = "instrument_specs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    category: Mapped[str] = mapped_column(String(32), default="spot", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="")
+    base_coin: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    quote_coin: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    price_tick_size: Mapped[float] = mapped_column(Float, default=0.01)
+    qty_step: Mapped[float] = mapped_column(Float, default=0.000001)
+    min_order_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_order_amount_quote: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_limit_order_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_market_order_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    base_precision: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quote_precision: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class SignalRecord(Base):
     __tablename__ = "signals"
 
@@ -66,7 +87,9 @@ class OrderIntentRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     signal_id: Mapped[str | None] = mapped_column(
-        ForeignKey("signals.id"), nullable=True, index=True
+        ForeignKey("signals.id"),
+        nullable=True,
+        index=True,
     )
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     side: Mapped[str] = mapped_column(String(16), index=True)
@@ -74,10 +97,14 @@ class OrderIntentRecord(Base):
     qty: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(32), index=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=now_utc, index=True
+        DateTime(timezone=True),
+        default=now_utc,
+        index=True,
     )
     expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
     )
     replaced_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -94,7 +121,9 @@ class OrderEventRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     order_intent_id: Mapped[str] = mapped_column(ForeignKey("order_intents.id"), index=True)
     signal_id: Mapped[str | None] = mapped_column(
-        ForeignKey("signals.id"), nullable=True, index=True
+        ForeignKey("signals.id"),
+        nullable=True,
+        index=True,
     )
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     event_type: Mapped[str] = mapped_column(String(64), index=True)
@@ -103,6 +132,19 @@ class OrderEventRecord(Base):
     reason_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     intent: Mapped[OrderIntentRecord] = relationship(back_populates="events")
+
+
+class PaperFillRecord(Base):
+    __tablename__ = "paper_fills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+    order_intent_id: Mapped[str] = mapped_column(ForeignKey("order_intents.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    side: Mapped[str] = mapped_column(String(16), index=True)
+    fill_price: Mapped[float] = mapped_column(Float)
+    fill_qty: Mapped[float] = mapped_column(Float)
+    reason_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
 class PositionRecord(Base):

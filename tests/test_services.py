@@ -11,13 +11,22 @@ import pytest
 from adaptive_bybit_bot.config import Settings
 from adaptive_bybit_bot.data.db import create_database_engine
 from adaptive_bybit_bot.data.repositories import BotRepository
-from adaptive_bybit_bot.domain.models import Candle, MarketSnapshot, OrderBook, OrderBookLevel
+from adaptive_bybit_bot.domain.models import (
+    Candle,
+    InstrumentSpec,
+    MarketSnapshot,
+    OrderBook,
+    OrderBookLevel,
+)
 from adaptive_bybit_bot.services import market_loop
 from adaptive_bybit_bot.services.account_sync import sync_account_once, validate_read_only_key
 from adaptive_bybit_bot.services.factory import risk_config_from_settings
 
 
 class FakeMarketClient:
+    async def get_instrument_info(self, symbol: str, *, category: str = "spot") -> InstrumentSpec:
+        return InstrumentSpec.fallback(symbol)
+
     async def get_market_snapshot(self, symbol: str, **_kwargs: Any) -> MarketSnapshot:
         return market_snapshot(symbol)
 

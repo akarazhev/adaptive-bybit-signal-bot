@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     bybit_base_url: str = "https://api.bybit.com"
+    bybit_public_ws_spot_url: str = "wss://stream.bybit.com/v5/public/spot"
     bybit_api_key: str | None = None
     bybit_api_secret: str | None = None
     bybit_recv_window: int = 5000
@@ -23,7 +24,7 @@ class Settings(BaseSettings):
     kline_interval: str = "1"
     kline_limit: int = 240
     orderbook_limit: int = 50
-    recent_trades_limit: int = 100
+    recent_trades_limit: int = 60
 
     order_quote_usdt: float = 50.0
     max_position_quote_usdt: float = 250.0
@@ -39,6 +40,11 @@ class Settings(BaseSettings):
     order_ttl_seconds: int = 120
     reprice_threshold_bps: float = 4.0
     min_expected_edge_bps: float = 30.0
+
+    paper_trading_enabled: bool = False
+    paper_fill_mode: Annotated[str, Field(pattern="^(trade_through|touch)$")] = "trade_through"
+    paper_min_fill_ratio: float = 1.0
+    paper_max_trade_age_seconds: int = 300
 
     log_level: Annotated[str, Field(pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")] = "INFO"
 

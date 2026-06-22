@@ -4,4 +4,4 @@ This package intentionally does not contain order placement or cancellation call
 It writes order intents and lets a human or a separate executor act on them.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

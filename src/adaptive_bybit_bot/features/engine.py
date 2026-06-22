@@ -40,7 +40,9 @@ class FeatureEngine:
             vwap=vwap_value,
             vwap_deviation_bps=vwap_dev,
             orderbook_imbalance=self._orderbook_imbalance(
-                snapshot.orderbook, mid_price, window_bps=10
+                snapshot.orderbook,
+                mid_price,
+                window_bps=10,
             ),
             microprice=self._microprice(snapshot.orderbook),
             trade_imbalance=self._trade_imbalance(snapshot.trades),
@@ -66,7 +68,9 @@ class FeatureEngine:
 
     @staticmethod
     def _orderbook_imbalance(
-        orderbook: OrderBook, mid_price: float, window_bps: float
+        orderbook: OrderBook,
+        mid_price: float,
+        window_bps: float,
     ) -> float | None:
         if mid_price <= 0:
             return None

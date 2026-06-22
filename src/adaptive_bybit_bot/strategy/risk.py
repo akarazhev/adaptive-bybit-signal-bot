@@ -30,11 +30,15 @@ class RiskConfig:
     def required_buy_edge_bps(self) -> float:
         return max(
             self.min_expected_edge_bps,
-            self.maker_roundtrip_break_even_bps + self.min_net_profit_bps + self.safety_buffer_bps,
+            self.maker_roundtrip_break_even_bps
+            + self.min_net_profit_bps
+            + self.safety_buffer_bps,
         )
 
     @property
     def target_sell_profit_bps(self) -> float:
         return (
-            self.maker_roundtrip_break_even_bps + self.min_net_profit_bps + self.safety_buffer_bps
+            self.maker_roundtrip_break_even_bps
+            + self.min_net_profit_bps
+            + self.safety_buffer_bps
         )

@@ -4,7 +4,12 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from adaptive_bybit_bot.domain.enums import Regime, Side, SignalAction
-from adaptive_bybit_bot.domain.models import FeatureSet, PositionState, SignalDecision
+from adaptive_bybit_bot.domain.models import (
+    FeatureSet,
+    InstrumentSpec,
+    PositionState,
+    SignalDecision,
+)
 from adaptive_bybit_bot.strategy.order_pricing import bps_diff, clamp, round_price, round_qty
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment
 from adaptive_bybit_bot.strategy.risk import RiskConfig
@@ -28,12 +33,20 @@ class StrategyEngine:
     """Strategy selector and order-intent decision engine.
 
     The engine never places orders. It returns decisions that repositories persist as
-    order intents/events.
+    order intents/events. Instrument filters are used only to normalize and validate
+    locally logged order intents.
     """
 
-    def __init__(self, risk: RiskConfig, *, price_tick_size: float = 0.01) -> None:
+    def __init__(
+        self,
+        risk: RiskConfig,
+        *,
+        instrument: InstrumentSpec | None = None,
+        price_tick_size: float = 0.01,
+    ) -> None:
         self.risk = risk
-        self.price_tick_size = price_tick_size
+        self.instrument = instrument or InstrumentSpec(symbol="", price_tick_size=price_tick_size)
+        self.price_tick_size = self.instrument.price_tick_size or price_tick_size
 
     def evaluate(
         self,
@@ -191,18 +204,21 @@ class StrategyEngine:
                 expected_edge_bps=expected_edge_bps,
             )
 
-        qty = round_qty(self.risk.order_quote_usdt / price)
-        if qty <= 0:
+        qty = self._normalize_qty(self.risk.order_quote_usdt / price)
+        validation_errors = self._validate_order(price=price, qty=qty)
+        if validation_errors:
             return SignalDecision.hold(
                 features.symbol,
                 regime.regime,
-                ["invalid_buy_qty", *reasons],
+                ["instrument_filter_failed", *validation_errors, *reasons],
                 confidence=regime.confidence,
                 expected_edge_bps=expected_edge_bps,
             )
 
         confidence = clamp(
-            (expected_edge_bps / max(required_edge_bps * 1.8, 1)) * regime.confidence, 0.25, 0.92
+            (expected_edge_bps / max(required_edge_bps * 1.8, 1)) * regime.confidence,
+            0.25,
+            0.92,
         )
         reasons.extend(
             [
@@ -228,6 +244,7 @@ class StrategyEngine:
                 "vwap_deviation_bps": features.vwap_deviation_bps,
                 "orderbook_imbalance": features.orderbook_imbalance,
                 "trade_imbalance": features.trade_imbalance,
+                "instrument": self._instrument_metadata(),
             },
         )
 
@@ -309,20 +326,40 @@ class StrategyEngine:
 
         if risk_exit:
             raw_price = features.best_bid or features.last_price
-            price = round_price(raw_price, tick_size=self.price_tick_size, side="SELL")
+            price = self._normalize_price(raw_price, Side.SELL)
+            qty = self._normalize_exit_qty(position.qty)
+            blocking_errors, filter_warnings = self._validate_reduce_only_exit_order(
+                price=price,
+                qty=qty,
+            )
+            if blocking_errors:
+                return SignalDecision.hold(
+                    features.symbol,
+                    regime.regime,
+                    ["risk_exit_intent_failed_instrument_filter", *blocking_errors, *reasons],
+                    confidence=0.70,
+                    expected_edge_bps=pnl_bps,
+                )
+            if filter_warnings:
+                reasons = ["reduce_only_exit_below_instrument_minimum", *filter_warnings, *reasons]
             confidence = clamp(0.70 + abs(min(pnl_bps, 0.0)) / 500, 0.70, 0.95)
             return SignalDecision(
                 action=SignalAction.SELL_INTENT,
                 symbol=features.symbol,
                 side=Side.SELL,
                 price=price,
-                qty=round_qty(position.qty),
+                qty=qty,
                 regime=regime.regime,
                 confidence=confidence,
                 expected_edge_bps=pnl_bps,
                 reason=reasons,
                 ttl_seconds=self.risk.order_ttl_seconds,
-                metadata={"risk_exit": True, "target_sell_profit_bps": target_bps},
+                metadata={
+                    "risk_exit": True,
+                    "target_sell_profit_bps": target_bps,
+                    "instrument": self._instrument_metadata(),
+                    "instrument_filter_warnings": filter_warnings,
+                },
             )
 
         if regime.regime == Regime.UPTREND:
@@ -342,10 +379,27 @@ class StrategyEngine:
         if features.best_ask is not None:
             target_price = max(target_price, features.best_ask)
 
-        price = round_price(target_price, tick_size=self.price_tick_size, side="SELL")
+        price = self._normalize_price(target_price, Side.SELL)
+        qty = self._normalize_exit_qty(position.qty)
+        blocking_errors, filter_warnings = self._validate_reduce_only_exit_order(
+            price=price,
+            qty=qty,
+        )
+        if blocking_errors:
+            return SignalDecision.hold(
+                features.symbol,
+                regime.regime,
+                ["sell_intent_failed_instrument_filter", *blocking_errors, *reasons],
+                confidence=0.55,
+                expected_edge_bps=pnl_bps,
+            )
+        if filter_warnings:
+            reasons = ["reduce_only_exit_below_instrument_minimum", *filter_warnings, *reasons]
+
         expected_net_bps = (
-            price / position.avg_entry - 1
-        ) * 10_000 - self.risk.maker_roundtrip_break_even_bps
+            (price / position.avg_entry - 1) * 10_000
+            - self.risk.maker_roundtrip_break_even_bps
+        )
         confidence = clamp(0.55 + max(expected_net_bps, 0) / 120, 0.55, 0.90)
         reasons.extend(
             [
@@ -358,7 +412,7 @@ class StrategyEngine:
             symbol=features.symbol,
             side=Side.SELL,
             price=price,
-            qty=round_qty(position.qty),
+            qty=qty,
             regime=regime.regime,
             confidence=confidence,
             expected_edge_bps=expected_net_bps,
@@ -369,6 +423,8 @@ class StrategyEngine:
                 "avg_entry": position.avg_entry,
                 "target_sell_profit_bps": target_bps,
                 "break_even_bps": self.risk.maker_roundtrip_break_even_bps,
+                "instrument": self._instrument_metadata(),
+                "instrument_filter_warnings": filter_warnings,
             },
         )
 
@@ -378,7 +434,7 @@ class StrategyEngine:
         raw_price = features.mid_price * (1 - offset_bps / 10_000)
         if features.best_bid is not None:
             raw_price = min(raw_price, features.best_bid)
-        return round_price(raw_price, tick_size=self.price_tick_size, side="BUY")
+        return self._normalize_price(raw_price, Side.BUY)
 
     def _expected_buy_edge_bps(self, features: FeatureSet, regime: Regime) -> float:
         vwap_discount = -(features.vwap_deviation_bps or 0.0)
@@ -399,6 +455,52 @@ class StrategyEngine:
         if features.open_interest_change_pct is not None and features.open_interest_change_pct > 5:
             edge -= 3.0
         return edge
+
+    def _normalize_price(self, price: float, side: Side) -> float:
+        if self.instrument.symbol:
+            return self.instrument.normalize_price(price, side)
+        return round_price(price, tick_size=self.price_tick_size, side=side.value)
+
+    def _normalize_qty(self, qty: float) -> float:
+        if self.instrument.symbol:
+            return self.instrument.normalize_qty(qty)
+        return round_qty(qty)
+
+    def _normalize_exit_qty(self, qty: float) -> float:
+        normalized_qty = self._normalize_qty(qty)
+        return normalized_qty if normalized_qty > 0 else qty
+
+    def _validate_order(self, *, price: float, qty: float) -> list[str]:
+        if self.instrument.symbol:
+            return self.instrument.validate_limit_order(price=price, qty=qty)
+        if price <= 0 or qty <= 0:
+            return ["price_or_qty_must_be_positive"]
+        return []
+
+    def _validate_reduce_only_exit_order(
+        self,
+        *,
+        price: float,
+        qty: float,
+    ) -> tuple[list[str], list[str]]:
+        errors = self._validate_order(price=price, qty=qty)
+        warnings = [
+            error
+            for error in errors
+            if error.startswith("qty_below_min:") or error.startswith("notional_below_min:")
+        ]
+        blocking_errors = [error for error in errors if error not in warnings]
+        return blocking_errors, warnings
+
+    def _instrument_metadata(self) -> dict[str, float | str | None]:
+        return {
+            "symbol": self.instrument.symbol or None,
+            "category": self.instrument.category,
+            "status": self.instrument.status,
+            "price_tick_size": self.instrument.price_tick_size,
+            "qty_step": self.instrument.qty_step,
+            "min_order_amount_quote": self.instrument.min_order_amount_quote,
+        }
 
     @staticmethod
     def _position_age_seconds(position: PositionState) -> int | None:

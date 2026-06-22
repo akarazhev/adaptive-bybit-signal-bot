@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from adaptive_bybit_bot.domain.enums import Regime, SignalAction
-from adaptive_bybit_bot.domain.models import FeatureSet, PositionState
+from adaptive_bybit_bot.domain.models import FeatureSet, InstrumentSpec, PositionState
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment
 from adaptive_bybit_bot.strategy.risk import RiskConfig
 from adaptive_bybit_bot.strategy.strategy import StrategyEngine
@@ -89,3 +89,26 @@ def test_strategy_creates_sell_intent_for_open_position() -> None:
     )
     assert decision.action == SignalAction.SELL_INTENT
     assert decision.price is not None and decision.price >= 100.0
+
+
+def test_strategy_still_surfaces_reduce_only_sell_when_position_is_below_minimums() -> None:
+    engine = StrategyEngine(
+        RiskConfig(max_unrealized_loss_bps=50),
+        instrument=InstrumentSpec(
+            symbol="BTCUSDT",
+            min_order_qty=0.1,
+            min_order_amount_quote=5.0,
+            qty_step=0.001,
+        ),
+    )
+
+    decision = engine.evaluate(
+        features=make_features(last_price=98.0, mid_price=98.0, best_bid=97.99),
+        regime=RegimeAssessment(Regime.DOWNTREND, 0.70, ["test_downtrend"]),
+        position=PositionState(symbol="BTCUSDT", qty=0.01, avg_entry=100.0),
+    )
+
+    assert decision.action == SignalAction.SELL_INTENT
+    assert decision.qty == 0.01
+    assert "reduce_only_exit_below_instrument_minimum" in decision.reason
+    assert "instrument_filter_warnings" in decision.metadata
