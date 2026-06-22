@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from adaptive_bybit_bot.data.models import Base
 
@@ -27,6 +28,7 @@ def create_database_engine(database_url: str) -> Engine:
     kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": True}
     if database_url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+        kwargs["poolclass"] = NullPool
     return create_engine(database_url, **kwargs)
 
 
