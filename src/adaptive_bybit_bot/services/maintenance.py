@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from adaptive_bybit_bot.config import Settings
 from adaptive_bybit_bot.data.repositories import BotRepository
@@ -20,7 +19,7 @@ async def _sleep_with_heartbeat(
     settings: Settings,
     heartbeat: HeartbeatEmitter,
     status: str,
-    details: dict[str, Any],
+    details: dict[str, object],
 ) -> None:
     remaining = max(seconds, 0)
     while remaining > 0:

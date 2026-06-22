@@ -16,7 +16,10 @@ from adaptive_bybit_bot.data.models import (
     FearGreedIndexRecord,
     InstrumentSpecRecord,
     MarketFeatureRecord,
+    MarketRecordingSessionRecord,
     MarketRegimeRecord,
+    MarketReplayFillRecord,
+    MarketReplayRunRecord,
     OrderEventRecord,
     OrderIntentRecord,
     PaperFillRecord,
@@ -460,9 +463,7 @@ class BotRepository:
         """
         summary = result.summary_dict() if hasattr(result, "summary_dict") else result.as_dict()
         config = getattr(result, "config", None)
-        config_json: dict[str, Any] = {}
-        if config is not None and hasattr(config, "as_dict"):
-            config_json = config.as_dict()
+        config_json = config.as_dict() if config is not None and hasattr(config, "as_dict") else {}
         with session_scope(self.engine) as session:
             run = BacktestRunRecord(
                 symbol=result.symbol,
@@ -553,6 +554,188 @@ class BotRepository:
                 }
                 for row in rows
             ]
+
+    def start_market_recording_session(
+        self,
+        *,
+        symbols: list[str],
+        topics: list[str],
+        depth: int,
+        output_dir: str,
+        file_path: str,
+        config: dict[str, Any] | None = None,
+        source: str = "bybit_public_ws",
+        started_at: datetime | None = None,
+    ) -> str:
+        observed_at = _aware(started_at or _now())
+        with session_scope(self.engine) as session:
+            row = MarketRecordingSessionRecord(
+                ts=observed_at,
+                source=source,
+                status="running",
+                symbols_json=_json_safe([symbol.upper() for symbol in symbols]),
+                topics_json=_json_safe(topics),
+                depth=depth,
+                output_dir=output_dir,
+                file_path=file_path,
+                started_at=observed_at,
+                config_json=_json_safe(config or {}),
+                summary_json={},
+            )
+            session.add(row)
+            session.flush()
+            return row.id
+
+    def update_market_recording_session(
+        self,
+        session_id: str,
+        *,
+        event_count: int | None = None,
+        bytes_written: int | None = None,
+        status: str | None = None,
+        summary: dict[str, Any] | None = None,
+    ) -> bool:
+        with session_scope(self.engine) as session:
+            row = session.get(MarketRecordingSessionRecord, session_id)
+            if row is None:
+                return False
+            if event_count is not None:
+                row.event_count = event_count
+            if bytes_written is not None:
+                row.bytes_written = bytes_written
+            if status is not None:
+                row.status = status
+            if summary is not None:
+                row.summary_json = _json_safe(summary)
+            return True
+
+    def finish_market_recording_session(
+        self,
+        session_id: str,
+        *,
+        status: str,
+        event_count: int,
+        bytes_written: int,
+        ended_at: datetime | None = None,
+        summary: dict[str, Any] | None = None,
+    ) -> bool:
+        observed_at = _aware(ended_at or _now())
+        with session_scope(self.engine) as session:
+            row = session.get(MarketRecordingSessionRecord, session_id)
+            if row is None:
+                return False
+            row.status = status
+            row.event_count = event_count
+            row.bytes_written = bytes_written
+            row.ended_at = observed_at
+            row.summary_json = _json_safe(
+                summary
+                or {
+                    "event_count": event_count,
+                    "bytes_written": bytes_written,
+                    "duration_seconds": max(
+                        0.0, (observed_at - _aware(row.started_at)).total_seconds()
+                    ),
+                }
+            )
+            return True
+
+    def get_market_recording_session(self, session_id: str) -> dict[str, Any] | None:
+        with session_scope(self.engine) as session:
+            row = session.get(MarketRecordingSessionRecord, session_id)
+            return _market_recording_session_to_dict(row) if row else None
+
+    def list_market_recordings(self, limit: int = 20) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            rows = (
+                session.execute(
+                    select(MarketRecordingSessionRecord)
+                    .order_by(desc(MarketRecordingSessionRecord.started_at))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            return [_market_recording_session_to_dict(row) for row in rows]
+
+    def save_market_replay_result(self, result: Any) -> str:
+        summary = result.summary_dict() if hasattr(result, "summary_dict") else result.as_dict()
+        config = getattr(result, "config", None)
+        config_json = config.as_dict() if config is not None and hasattr(config, "as_dict") else {}
+        with session_scope(self.engine) as session:
+            run = MarketReplayRunRecord(
+                recording_session_id=getattr(result, "recording_session_id", None),
+                input_path=getattr(result, "input_path", ""),
+                symbol=result.symbol,
+                started_at=result.started_at,
+                finished_at=result.finished_at,
+                event_count=getattr(result, "event_count", 0),
+                candle_count=getattr(result, "candle_count", 0),
+                decision_count=getattr(
+                    result, "decision_count", len(getattr(result, "decisions", []))
+                ),
+                fill_count=getattr(result, "fill_count", len(getattr(result, "fills", []))),
+                config_json=_json_safe(config_json),
+                summary_json=_json_safe(summary),
+            )
+            session.add(run)
+            session.flush()
+            for fill in getattr(result, "fills", []):
+                side = getattr(fill, "side", None)
+                side_value = getattr(side, "value", side)
+                session.add(
+                    MarketReplayFillRecord(
+                        run_id=run.id,
+                        ts=fill.ts,
+                        symbol=fill.symbol,
+                        side=str(side_value),
+                        price=fill.price,
+                        qty=fill.qty,
+                        fee_quote=fill.fee_quote,
+                        realized_pnl_quote=getattr(
+                            fill,
+                            "realized_pnl_quote",
+                            getattr(fill, "pnl_quote", None),
+                        ),
+                        reason_json={
+                            "reason": getattr(fill, "reason", ""),
+                            "intent_id": getattr(fill, "intent_id", ""),
+                            "cash_after": getattr(fill, "cash_after", None),
+                            "base_after": getattr(fill, "base_after", None),
+                        },
+                    )
+                )
+            return run.id
+
+    def list_market_replays(self, limit: int = 20) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            rows = (
+                session.execute(
+                    select(MarketReplayRunRecord)
+                    .order_by(desc(MarketReplayRunRecord.ts))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            return [_market_replay_run_to_dict(row) for row in rows]
+
+    def list_market_replay_fills(
+        self,
+        *,
+        run_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            stmt = select(MarketReplayFillRecord)
+            if run_id:
+                stmt = stmt.where(MarketReplayFillRecord.run_id == run_id)
+            rows = (
+                session.execute(stmt.order_by(desc(MarketReplayFillRecord.ts)).limit(limit))
+                .scalars()
+                .all()
+            )
+            return [_market_replay_fill_to_dict(row) for row in rows]
 
     def save_feature_set(self, features: FeatureSet, *, version: str = "v1") -> str:
         with session_scope(self.engine) as session:
@@ -1187,4 +1370,61 @@ def _instrument_spec_record_to_dict(row: InstrumentSpecRecord) -> dict[str, Any]
         "min_order_amount": row.min_order_amount_quote,
         "max_limit_order_qty": row.max_limit_order_qty,
         "max_market_order_qty": row.max_market_order_qty,
+    }
+
+
+def _market_recording_session_to_dict(row: MarketRecordingSessionRecord) -> dict[str, Any]:
+    duration_seconds = None
+    if row.started_at and row.ended_at:
+        duration_seconds = max(0.0, (_aware(row.ended_at) - _aware(row.started_at)).total_seconds())
+    return {
+        "id": row.id,
+        "ts": row.ts.isoformat() if row.ts else None,
+        "source": row.source,
+        "status": row.status,
+        "symbols": row.symbols_json or [],
+        "topics": row.topics_json or [],
+        "depth": row.depth,
+        "output_dir": row.output_dir,
+        "file_path": row.file_path,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "ended_at": row.ended_at.isoformat() if row.ended_at else None,
+        "duration_seconds": duration_seconds,
+        "event_count": row.event_count,
+        "bytes_written": row.bytes_written,
+        "config": row.config_json or {},
+        "summary": row.summary_json or {},
+    }
+
+
+def _market_replay_run_to_dict(row: MarketReplayRunRecord) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "ts": row.ts.isoformat() if row.ts else None,
+        "recording_session_id": row.recording_session_id,
+        "input_path": row.input_path,
+        "symbol": row.symbol,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+        "event_count": row.event_count,
+        "candle_count": row.candle_count,
+        "decision_count": row.decision_count,
+        "fill_count": row.fill_count,
+        "config": row.config_json or {},
+        "summary": row.summary_json or {},
+    }
+
+
+def _market_replay_fill_to_dict(row: MarketReplayFillRecord) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "run_id": row.run_id,
+        "ts": row.ts.isoformat() if row.ts else None,
+        "symbol": row.symbol,
+        "side": row.side,
+        "price": row.price,
+        "qty": row.qty,
+        "fee_quote": row.fee_quote,
+        "realized_pnl_quote": row.realized_pnl_quote,
+        "reason": row.reason_json or {},
     }

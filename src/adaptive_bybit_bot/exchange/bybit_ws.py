@@ -69,9 +69,13 @@ class BybitPublicWebSocketClient:
 
     @staticmethod
     async def _subscribe(websocket: Any, topics: list[str]) -> None:
-        await websocket.send(
-            json.dumps({"req_id": str(uuid4()), "op": "subscribe", "args": topics})
-        )
+        # Bybit public spot WS allows up to 10 args per subscription request.
+        for index in range(0, len(topics), 10):
+            await websocket.send(
+                json.dumps(
+                    {"req_id": str(uuid4()), "op": "subscribe", "args": topics[index : index + 10]}
+                )
+            )
 
     async def _ping_loop(self, websocket: Any) -> None:
         while True:

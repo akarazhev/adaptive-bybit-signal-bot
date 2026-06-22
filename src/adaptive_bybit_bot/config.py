@@ -97,6 +97,20 @@ class Settings(BaseSettings):
     backtest_synthetic_spread_bps: float = 2.0
     backtest_force_close: bool = True
 
+    # High-volume market recordings are file-backed; DB stores only metadata.
+    market_recording_dir: str = "/data/market-recordings"
+    market_recording_orderbook_depth: int = 50
+    market_recording_compress: bool = True
+    market_recording_flush_every_events: int = 1_000
+
+    # Replay settings for recorded public WS data.
+    replay_interval_seconds: int = 60
+    replay_evaluation_interval_seconds: int = 10
+    replay_warmup_candles: int = 60
+    replay_trade_lookback_seconds: int = 120
+    replay_fill_model: Annotated[str, Field(pattern="^(trade_through|touch)$")] = "trade_through"
+    replay_force_close: bool = True
+
     log_level: Annotated[str, Field(pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")] = "INFO"
 
     @field_validator("symbols", mode="before")

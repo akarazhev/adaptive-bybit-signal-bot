@@ -17,3 +17,7 @@ def test_cli_help_imports_cleanly() -> None:
     assert "paper-loop" in result.output
     assert "list-services" in result.output
     assert "list-locks" in result.output
+    assert "record-market" in result.output
+    assert "replay-market" in result.output
+    assert "list-market-recordings" in result.output
+    assert "list-market-replays" in result.output

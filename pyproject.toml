@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "adaptive-bybit-signal-bot"
-version = "0.5.0"
+version = "0.6.0"
 description = "Read-only Bybit spot signal bot that writes order intents to a database instead of placing orders."
 readme = "README.md"
 requires-python = ">=3.12"

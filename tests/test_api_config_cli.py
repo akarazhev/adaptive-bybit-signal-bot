@@ -2,20 +2,24 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+import typer
 from fastapi.testclient import TestClient
 
 from adaptive_bybit_bot import cli as cli_module
 from adaptive_bybit_bot.api.app import create_app
+from adaptive_bybit_bot.backtesting.engine import BacktestFill
 from adaptive_bybit_bot.config import Settings
 from adaptive_bybit_bot.data.db import create_database_engine
 from adaptive_bybit_bot.data.repositories import BotRepository
 from adaptive_bybit_bot.domain.enums import Regime, Side, SignalAction
 from adaptive_bybit_bot.domain.models import SignalDecision
+from adaptive_bybit_bot.recording.replay import MarketReplayConfig, MarketReplayResult
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,20 @@ def test_api_lists_health_signals_and_intents(tmp_path: Path) -> None:
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/intents").json()[0]["symbol"] == "BTCUSDT"
     assert client.get("/signals").json()[0]["action"] == "BUY_INTENT"
+    for path in [
+        "/paper-fills",
+        "/positions",
+        "/instruments",
+        "/services",
+        "/locks",
+        "/sentiment/fng",
+        "/backtests",
+        "/backtest-fills",
+        "/market-recordings",
+        "/market-replays",
+        "/market-replay-fills",
+    ]:
+        assert client.get(path).status_code == 200
 
 
 def test_cli_database_and_listing_commands(
@@ -143,6 +161,106 @@ def test_cli_async_commands_use_configured_client(
         ("validate", settings),
         ("sync", ["BTCUSDT"]),
     ]
+
+
+def test_cli_market_recording_and_replay_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = settings_for(tmp_path)
+    monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
+    cli_module.init_db()
+    repository = BotRepository(create_database_engine(settings.database_url))
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    session_id = repository.start_market_recording_session(
+        symbols=["BTCUSDT"],
+        topics=["publicTrade.BTCUSDT"],
+        depth=50,
+        output_dir=str(tmp_path),
+        file_path=str(tmp_path / "session.jsonl"),
+        started_at=started_at,
+    )
+    repository.finish_market_recording_session(
+        session_id,
+        status="finished",
+        event_count=1,
+        bytes_written=10,
+        ended_at=started_at + timedelta(seconds=1),
+    )
+    calls: list[tuple[str, object]] = []
+
+    async def fake_record_market_forever(**kwargs: Any) -> dict[str, Any]:
+        calls.append(("record", kwargs["symbols"]))
+        return {"id": "recording", "status": "finished"}
+
+    class FakeMarketReplayRunner:
+        def __init__(self, **kwargs: Any) -> None:
+            calls.append(("runner", kwargs["instrument"].symbol))
+
+        def run_file(
+            self,
+            input_path: Path,
+            *,
+            symbol: str,
+            recording_session_id: str | None = None,
+        ) -> MarketReplayResult:
+            calls.append(("replay", str(input_path)))
+            return MarketReplayResult(
+                symbol=symbol,
+                input_path=str(input_path),
+                recording_session_id=recording_session_id,
+                started_at=started_at,
+                finished_at=started_at + timedelta(minutes=1),
+                event_count=2,
+                candle_count=1,
+                decisions=[],
+                fills=[
+                    BacktestFill(
+                        ts=started_at + timedelta(seconds=30),
+                        intent_id="intent",
+                        symbol=symbol,
+                        side=Side.BUY.value,
+                        price=100.0,
+                        qty=0.1,
+                        fee_quote=0.01,
+                        cash_after=989.99,
+                        base_after=0.1,
+                        reason="unit_test",
+                    )
+                ],
+                initial_quote=1000.0,
+                final_quote_equity=1001.0,
+                realized_quote=1.0,
+                unrealized_quote=0.0,
+                return_pct=0.1,
+                max_drawdown_pct=0.0,
+                win_rate=0.0,
+                closed_round_trips=0,
+                open_base_qty=0.1,
+                open_avg_entry=100.0,
+                config=MarketReplayConfig(),
+            )
+
+    monkeypatch.setattr(cli_module, "record_market_forever", fake_record_market_forever)
+    monkeypatch.setattr(cli_module, "MarketReplayRunner", FakeMarketReplayRunner)
+
+    cli_module.record_market(
+        symbols="BTCUSDT",
+        seconds=5,
+        depth=50,
+        output_dir=tmp_path,
+        service_name="unit-recorder",
+    )
+    cli_module.list_market_recordings(limit=5)
+    cli_module.replay_market(symbol="btcusdt", recording_id=session_id, save=True)
+    cli_module.list_market_replays(limit=5)
+    cli_module.list_market_replay_fills(limit=5)
+
+    with pytest.raises(typer.BadParameter, match="provide --input or --recording-id"):
+        cli_module.replay_market(symbol="BTCUSDT", save=False)
+
+    assert ("record", ["BTCUSDT"]) in calls
+    assert ("runner", "BTCUSDT") in calls
 
 
 def test_cli_api_command_invokes_uvicorn(

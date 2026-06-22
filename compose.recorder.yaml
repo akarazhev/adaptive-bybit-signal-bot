@@ -1,0 +1,28 @@
+services:
+  market-recorder:
+    build:
+      context: .
+      dockerfile: Containerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+      APP_ENV: compose
+      STRATEGY_WRITER_SERVICE: ws-shadow
+    depends_on:
+      - postgres
+    volumes:
+      - market-recordings:/data/market-recordings
+    command:
+      [
+        "record-market",
+        "--symbols",
+        "${SYMBOLS:-BTCUSDT,ETHUSDT}",
+        "--depth",
+        "${MARKET_RECORDING_ORDERBOOK_DEPTH:-50}",
+        "--service-name",
+        "market-recorder"
+      ]
+    restart: unless-stopped
+
+volumes:
+  market-recordings:

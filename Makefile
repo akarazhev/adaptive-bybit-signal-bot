@@ -1,4 +1,4 @@
-.PHONY: test init-db wait-db run-once run-ws refresh-instruments instrument-loop fetch-fng fng-loop list-fng paper-fill-once paper-loop ws-print ws-snapshot backtest-fetch backtest-csv api build run shell compose-up compose-down compose-logs
+.PHONY: test init-db wait-db run-once run-ws refresh-instruments instrument-loop fetch-fng fng-loop list-fng paper-fill-once paper-loop ws-print ws-snapshot record-market replay-market backtest-fetch backtest-csv api build run shell compose-up compose-down compose-logs compose-recorder-up
 
 test:
 	PYTHONPATH=src pytest
@@ -42,6 +42,12 @@ ws-print:
 ws-snapshot:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli ws-snapshot --symbols BTCUSDT --seconds 10
 
+record-market:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli record-market --symbols BTCUSDT,ETHUSDT --seconds 300
+
+replay-market:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli replay-market --symbol BTCUSDT --input data/market-recordings/example.jsonl.gz
+
 backtest-fetch:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli backtest-fetch --symbol BTCUSDT --interval 1 --start 2026-06-01 --end 2026-06-02
 
@@ -68,3 +74,6 @@ compose-down:
 
 compose-logs:
 	./scripts/podman-compose-logs.sh
+
+compose-recorder-up:
+	podman compose -f compose.yaml -f compose.recorder.yaml up --build postgres migrate api market-recorder

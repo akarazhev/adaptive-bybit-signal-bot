@@ -6,7 +6,7 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
 
 > Engineering scaffold only, not financial advice. Run offline backtests and paper/live-shadow mode first, then tune parameters from your own statistics before using real capital.
 
-## Implemented in v0.5
+## Implemented in v0.6
 
 ### Public market data
 
@@ -110,6 +110,10 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
   - fetch klines and run backtest in one command
   - persist backtest summary/fills in DB
   - includes maker-fee accounting and synthetic spread
+- File-backed public WebSocket market recorder:
+  - records raw ticker/trade/orderbook messages into JSONL or JSONL.GZ
+  - stores only recording metadata in DB to avoid high-volume tick writes
+  - replay engine can run the strategy over recorded market streams
 
 ### Interfaces and deployment
 
@@ -117,6 +121,7 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
 - Small read-only HTTP API
 - Podman-compatible `Containerfile`
 - `compose.yaml` for PostgreSQL-first multi-service Podman Compose deployments
+- Optional `compose.recorder.yaml` overlay for the high-volume market recorder
 - Dedicated services for API, WebSocket shadow strategy, instrument sync, Fear & Greed sync, and paper fill simulation
 - Soft DB strategy locks to avoid competing signal writers
 - Service heartbeats exposed through CLI/API
@@ -148,7 +153,7 @@ Bybit public/read-only REST + public WS
           ↓
 Exchange adapters
           ↓
-MarketSnapshot + InstrumentSpec + WS cache + FNG sentiment cache
+MarketSnapshot + InstrumentSpec + WS cache + FNG sentiment cache + recording/replay
           ↓
 FeatureEngine
           ↓
@@ -158,7 +163,7 @@ StrategyEngine + SentimentPolicy
           ↓
 BotRepository
           ↓
-SQLite/PostgreSQL + service heartbeats + strategy locks + logs + API/CLI
+SQLite/PostgreSQL + recording metadata + service heartbeats + strategy locks + logs + API/CLI
 ```
 
 Patterns used:
@@ -226,6 +231,9 @@ curl http://localhost:8080/instruments
 curl http://localhost:8080/positions
 curl http://localhost:8080/paper-fills
 curl http://localhost:8080/backtests
+curl http://localhost:8080/market-recordings
+curl http://localhost:8080/market-replays
+curl http://localhost:8080/market-replay-fills
 curl http://localhost:8080/sentiment/fng
 curl http://localhost:8080/services
 curl http://localhost:8080/locks
@@ -251,6 +259,14 @@ instrument-sync   periodic Bybit instrument filter refresh
 ws-shadow         public WebSocket strategy writer
 paper-runner      optional local paper-fill simulation
 ```
+
+The high-volume recorder is intentionally kept out of the default stack. To enable it, add the overlay:
+
+```bash
+podman compose -f compose.yaml -f compose.recorder.yaml up --build postgres migrate api market-recorder
+```
+
+Recordings are written under `/data/market-recordings` inside the container and stored in the `market-recordings` volume. Stop the recorder when you have enough data.
 
 Start the full stack:
 
@@ -307,6 +323,11 @@ adaptive-bybit-bot instrument-loop --symbols BTCUSDT,ETHUSDT --once
 adaptive-bybit-bot paper-loop --symbols BTCUSDT,ETHUSDT --once
 adaptive-bybit-bot list-services
 adaptive-bybit-bot list-locks
+adaptive-bybit-bot record-market --symbols BTCUSDT,ETHUSDT --seconds 3600
+adaptive-bybit-bot list-market-recordings
+adaptive-bybit-bot replay-market --symbol BTCUSDT --recording-id <recording-id>
+adaptive-bybit-bot list-market-replays
+adaptive-bybit-bot list-market-replay-fills
 ```
 
 WebSocket diagnostics:
@@ -317,7 +338,7 @@ adaptive-bybit-bot ws-snapshot --symbols BTCUSDT,ETHUSDT --seconds 10
 adaptive-bybit-bot ws-book --symbols BTCUSDT --seconds 30 --depth 50
 ```
 
-Backtesting:
+Backtesting and replay:
 
 ```bash
 adaptive-bybit-bot download-klines \
@@ -340,6 +361,13 @@ adaptive-bybit-bot backtest-fetch \
 
 adaptive-bybit-bot list-backtests
 adaptive-bybit-bot list-backtest-fills --limit 100
+
+# Replay a raw WS recording without contacting Bybit again
+adaptive-bybit-bot replay-market \
+  --symbol BTCUSDT \
+  --input data/market-recordings/example.jsonl.gz
+
+adaptive-bybit-bot list-market-replays
 ```
 
 ## Fear & Greed sentiment overlay
@@ -510,7 +538,7 @@ DATABASE_URL=sqlite:///./bot.db
 PostgreSQL can be used by setting a SQLAlchemy URL, for example:
 
 ```env
-DATABASE_URL=postgresql+psycopg://bot:bot@postgres:5432/bot
+DATABASE_URL=postgresql+psycopg://<user>:<password>@<host>:5432/<database>
 ```
 
 ## Testing
@@ -527,15 +555,16 @@ python -m adaptive_bybit_bot.cli --help
 1. Compose mode uses soft DB leases, not a distributed consensus system. Keep one intended strategy writer per symbol/service.
 2. The WebSocket shadow loop uses public streams only and still refreshes candles from REST.
 3. Candle-level backtesting is an approximation. It does not model queue position, hidden/RPI liquidity, realistic partial fills, or exact intrabar sequencing.
-4. Paper fills are conservative approximations and do not model all exchange microstructure details.
-5. Fear & Greed is daily/slow sentiment and should not be interpreted as a real-time entry trigger.
-6. Liquidation WebSocket data is not fully wired into the strategy. Funding and open interest are included as derivatives context only.
-7. The strategy is deliberately conservative and rule-based. Treat it as a baseline to measure, not as a finished alpha model.
+4. Market replay uses real recorded public WS sequencing, but fills are still approximations: the bot does not know its true queue position or hidden/RPI liquidity.
+5. Paper fills are conservative approximations and do not model all exchange microstructure details.
+6. Fear & Greed is daily/slow sentiment and should not be interpreted as a real-time entry trigger.
+7. Liquidation WebSocket data is not fully wired into the strategy. Funding and open interest are included as derivatives context only.
+8. The strategy is deliberately conservative and rule-based. Treat it as a baseline to measure, not as a finished alpha model.
 
 ## Suggested next steps
 
-- Add a persistent raw market-data recorder for WebSocket trades/orderbook deltas.
 - Add a more realistic fill model with queue position and partial fills.
+- Add replay/strategy reports: fill rate, adverse selection, net PnL by regime, and sentiment impact.
 - Add liquidation WebSocket adapter as context only.
 - Add sentiment attribution to a future dashboard/Telegram renderer.
 - Add Telegram notifications for new/cancel/reprice/fill events.

@@ -18,17 +18,9 @@ def to_float(value: object, default: float = 0.0) -> float:
     try:
         if value in (None, ""):
             return default
-        if isinstance(value, int | float | str):
-            return float(value)
-        return default
+        return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
-
-
-def _to_int(value: object) -> int:
-    if isinstance(value, int | float | str):
-        return int(value)
-    raise TypeError("value cannot be converted to int")
 
 
 @dataclass
@@ -159,6 +151,18 @@ def _optional_int(value: object) -> int | None:
         return _to_int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _to_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        return int(value)
+    raise TypeError(f"value cannot be converted to int: {value!r}")
 
 
 class LocalOrderBookStore:

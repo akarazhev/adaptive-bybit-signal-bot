@@ -19,10 +19,20 @@ from adaptive_bybit_bot.backtesting.historical import fetch_historical_klines, p
 from adaptive_bybit_bot.config import Settings, get_settings
 from adaptive_bybit_bot.data.db import wait_for_database
 from adaptive_bybit_bot.data.repositories import BotRepository
-from adaptive_bybit_bot.domain.models import Candle, FearGreedContext, InstrumentSpec
+from adaptive_bybit_bot.domain.models import (
+    Candle,
+    FearGreedContext,
+    FearGreedValue,
+    InstrumentSpec,
+)
 from adaptive_bybit_bot.exchange.bybit_client import BybitRestClient
 from adaptive_bybit_bot.exchange.bybit_ws import BybitPublicWebSocketClient
 from adaptive_bybit_bot.logging_config import configure_logging
+from adaptive_bybit_bot.recording import (
+    MarketReplayConfig,
+    MarketReplayRunner,
+    record_market_forever,
+)
 from adaptive_bybit_bot.sentiment.service import refresh_fear_greed_cache
 from adaptive_bybit_bot.services.account_sync import sync_account_once, validate_read_only_key
 from adaptive_bybit_bot.services.factory import (
@@ -90,6 +100,20 @@ def _backtest_config(settings: Settings, *, symbol: str, interval: str) -> Backt
     )
 
 
+def _market_replay_config(settings: Settings) -> MarketReplayConfig:
+    return MarketReplayConfig(
+        initial_quote=settings.backtest_starting_quote,
+        candle_interval_seconds=settings.replay_interval_seconds,
+        evaluation_interval_seconds=settings.replay_evaluation_interval_seconds,
+        warmup_candles=settings.replay_warmup_candles,
+        trade_lookback_seconds=settings.replay_trade_lookback_seconds,
+        maker_fee_bps=settings.spot_maker_fee_bps,
+        fill_model=settings.replay_fill_model,
+        force_close=settings.replay_force_close,
+        sentiment_enabled=settings.fng_enabled,
+    )
+
+
 def _run_backtest(
     *,
     settings: Settings,
@@ -99,12 +123,13 @@ def _run_backtest(
     candles: list[Candle],
     instrument: InstrumentSpec,
 ) -> BacktestResult:
-    sentiment_provider: Callable[[datetime], FearGreedContext | None] | None = None
+    sentiment_provider: Callable[[datetime], FearGreedContext | FearGreedValue | None] | None = None
     if settings.fng_enabled:
 
-        def sentiment_provider(ts: datetime) -> FearGreedContext | None:
+        def get_sentiment(ts: datetime) -> FearGreedContext | None:
             return repository.get_fear_greed_at(ts)
 
+        sentiment_provider = get_sentiment
     runner = CandleBacktestRunner(
         risk=risk_config_from_settings(settings),
         instrument=instrument,
@@ -606,6 +631,164 @@ def ws_book(
             console.print(f"Stopped after {seconds} seconds")
 
     asyncio.run(_run())
+
+
+@app.command("record-market")
+def record_market(
+    symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+    seconds: Annotated[int, typer.Option(help="Seconds to record; 0 means forever")] = 0,
+    depth: Annotated[
+        int | None, typer.Option(help="Orderbook depth topic, e.g. 1/50/200/1000")
+    ] = None,
+    output_dir: Annotated[
+        Path | None, typer.Option(help="Directory for JSONL(.gz) recordings")
+    ] = None,
+    service_name: Annotated[
+        str, typer.Option(help="Service name used for heartbeat")
+    ] = "market-recorder",
+) -> None:
+    """Record raw public Bybit spot WS market data to JSONL(.gz)."""
+    settings = _settings()
+    repository = _repo(settings)
+    selected_symbols = _parse_symbols(symbols, settings)
+
+    async def _run() -> None:
+        result = await record_market_forever(
+            settings=settings,
+            repository=repository,
+            symbols=selected_symbols,
+            seconds=seconds,
+            depth=depth,
+            output_dir=output_dir,
+            service_name=service_name,
+        )
+        _print_json(result)
+
+    asyncio.run(_run())
+
+
+@app.command("list-market-recordings")
+def list_market_recordings(limit: Annotated[int, typer.Option(help="Rows to show")] = 20) -> None:
+    """Show market recording sessions and file paths."""
+    settings = _settings()
+    repository = _repo(settings)
+    rows = repository.list_market_recordings(limit=limit)
+    table = Table(title="Market recordings")
+    for column in ["id", "status", "symbols", "events", "bytes", "started_at", "file_path"]:
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            str(row["status"]),
+            ",".join(row.get("symbols") or []),
+            str(row["event_count"]),
+            str(row["bytes_written"]),
+            str(row["started_at"]),
+            str(row["file_path"]),
+        )
+    console.print(table)
+
+
+@app.command("replay-market")
+def replay_market(
+    symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
+    input_path: Annotated[
+        Path | None, typer.Option("--input", help="JSONL(.gz) recording path")
+    ] = None,
+    recording_id: Annotated[
+        str | None, typer.Option(help="Recording session id from list-market-recordings")
+    ] = None,
+    save: Annotated[
+        bool, typer.Option("--save/--no-save", help="Persist replay summary to DB")
+    ] = True,
+) -> None:
+    """Replay recorded WS market data through the strategy and local fill model."""
+    settings = _settings()
+    repository = _repo(settings)
+    selected_symbol = symbol.upper()
+    resolved_input = input_path
+    if recording_id:
+        recording = repository.get_market_recording_session(recording_id)
+        if recording is None:
+            raise typer.BadParameter(f"recording not found: {recording_id}")
+        resolved_input = Path(str(recording["file_path"]))
+    if resolved_input is None:
+        raise typer.BadParameter("provide --input or --recording-id")
+    instrument = repository.get_latest_instrument_spec(selected_symbol) or InstrumentSpec.fallback(
+        selected_symbol
+    )
+    sentiment_provider: Callable[[datetime], FearGreedContext | FearGreedValue | None] | None = None
+    if settings.fng_enabled:
+
+        def get_sentiment(ts: datetime) -> FearGreedContext | None:
+            return repository.get_fear_greed_at(ts)
+
+        sentiment_provider = get_sentiment
+    runner = MarketReplayRunner(
+        risk=risk_config_from_settings(settings),
+        instrument=instrument,
+        config=_market_replay_config(settings),
+        sentiment_policy=fear_greed_policy_from_settings(settings),
+        sentiment_provider=sentiment_provider,
+    )
+    result = runner.run_file(
+        resolved_input,
+        symbol=selected_symbol,
+        recording_session_id=recording_id,
+    )
+    run_id = repository.save_market_replay_result(result) if save else None
+    payload = result.as_dict()
+    payload["run_id"] = run_id
+    _print_json(payload)
+
+
+@app.command("list-market-replays")
+def list_market_replays(limit: Annotated[int, typer.Option(help="Rows to show")] = 20) -> None:
+    """Show market replay runs."""
+    settings = _settings()
+    repository = _repo(settings)
+    rows = repository.list_market_replays(limit=limit)
+    table = Table(title="Market replays")
+    for column in ["id", "symbol", "events", "candles", "fills", "return_pct", "input_path"]:
+        table.add_column(column)
+    for row in rows:
+        summary = row.get("summary") or {}
+        table.add_row(
+            str(row["id"]),
+            str(row["symbol"]),
+            str(row["event_count"]),
+            str(row["candle_count"]),
+            str(row["fill_count"]),
+            str(summary.get("return_pct")),
+            str(row["input_path"]),
+        )
+    console.print(table)
+
+
+@app.command("list-market-replay-fills")
+def list_market_replay_fills(
+    run_id: Annotated[str | None, typer.Option(help="Replay run id")] = None,
+    limit: Annotated[int, typer.Option(help="Rows to show")] = 100,
+) -> None:
+    """Show fills produced by market replay runs."""
+    settings = _settings()
+    repository = _repo(settings)
+    rows = repository.list_market_replay_fills(run_id=run_id, limit=limit)
+    table = Table(title="Market replay fills")
+    for column in ["run_id", "ts", "symbol", "side", "price", "qty", "fee", "pnl"]:
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            str(row["run_id"]),
+            str(row["ts"]),
+            str(row["symbol"]),
+            str(row["side"]),
+            str(row["price"]),
+            str(row["qty"]),
+            str(row["fee_quote"]),
+            str(row["realized_pnl_quote"]),
+        )
+    console.print(table)
 
 
 @app.command("download-klines")

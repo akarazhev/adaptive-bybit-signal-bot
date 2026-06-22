@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 import httpx
 
@@ -30,9 +30,7 @@ def _to_float(value: object, default: float = 0.0) -> float:
     try:
         if value in (None, ""):
             return default
-        if isinstance(value, int | float | str):
-            return float(value)
-        return default
+        return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
 
@@ -45,9 +43,15 @@ def _ms_to_dt(value: object) -> datetime:
 
 
 def _to_int(value: object) -> int:
-    if isinstance(value, int | float | str):
+    if isinstance(value, bool):
         return int(value)
-    raise TypeError("value cannot be converted to int")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        return int(value)
+    raise TypeError(f"value cannot be converted to int: {value!r}")
 
 
 def _result_dict(payload: dict[str, Any]) -> dict[str, Any]:
@@ -134,7 +138,9 @@ class BybitRestClient:
 
         response = await self._client.get(url, params=canonical_query(params), headers=headers)
         response.raise_for_status()
-        payload = cast(dict[str, Any], response.json())
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise BybitApiError("Bybit API returned a non-object payload")
         ret_code = payload.get("retCode")
         if ret_code not in (0, "0"):
             raise BybitApiError(
@@ -159,7 +165,7 @@ class BybitRestClient:
             "/v5/market/instruments-info",
             {"category": category, "symbol": symbol},
         )
-        rows = _result_dict(payload).get("list", [])
+        rows = payload.get("result", {}).get("list", [])
         instruments: list[InstrumentSpec] = []
         for row in rows:
             if not isinstance(row, dict):
@@ -212,7 +218,7 @@ class BybitRestClient:
                 "end": _dt_to_ms(end),
             },
         )
-        rows = _result_dict(payload).get("list", [])
+        rows = payload.get("result", {}).get("list", [])
         candles = [
             Candle(
                 ts=_ms_to_dt(row[0]),
@@ -238,7 +244,7 @@ class BybitRestClient:
             "/v5/market/orderbook",
             {"category": category, "symbol": symbol, "limit": limit},
         )
-        result = _result_dict(payload)
+        result = payload.get("result", {})
         bids = self._parse_levels(result.get("b"))
         asks = self._parse_levels(result.get("a"))
         ts = _ms_to_dt(result.get("ts", payload.get("time")))
@@ -259,7 +265,7 @@ class BybitRestClient:
             "/v5/market/recent-trade",
             {"category": category, "symbol": symbol, "limit": limit},
         )
-        rows = _result_dict(payload).get("list", [])
+        rows = payload.get("result", {}).get("list", [])
         trades: list[Trade] = []
         for row in rows:
             if not isinstance(row, dict):
@@ -281,7 +287,7 @@ class BybitRestClient:
             "/v5/market/funding/history",
             {"category": "linear", "symbol": linear_symbol, "limit": limit},
         )
-        rows = _result_dict(payload).get("list", [])
+        rows = payload.get("result", {}).get("list", [])
         rates = [_to_float(row.get("fundingRate")) for row in rows if isinstance(row, dict)]
         return list(reversed(rates))
 
@@ -301,7 +307,7 @@ class BybitRestClient:
                 "limit": limit,
             },
         )
-        rows = _result_dict(payload).get("list", [])
+        rows = payload.get("result", {}).get("list", [])
         values = [_to_float(row.get("openInterest")) for row in rows if isinstance(row, dict)]
         return list(reversed(values))
 

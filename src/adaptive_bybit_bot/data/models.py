@@ -70,6 +70,67 @@ class BacktestFillRecord(Base):
     reason_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class MarketRecordingSessionRecord(Base):
+    __tablename__ = "market_recording_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+    source: Mapped[str] = mapped_column(String(64), default="bybit_public_ws", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="running", index=True)
+    symbols_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    topics_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    depth: Mapped[int] = mapped_column(Integer, default=50)
+    output_dir: Mapped[str] = mapped_column(String(512), default="")
+    file_path: Mapped[str] = mapped_column(String(1024), default="")
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, index=True
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+    bytes_written: Mapped[int] = mapped_column(Integer, default=0)
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class MarketReplayRunRecord(Base):
+    __tablename__ = "market_replay_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+    recording_session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("market_recording_sessions.id"),
+        nullable=True,
+        index=True,
+    )
+    input_path: Mapped[str] = mapped_column(String(1024), default="")
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+    candle_count: Mapped[int] = mapped_column(Integer, default=0)
+    decision_count: Mapped[int] = mapped_column(Integer, default=0)
+    fill_count: Mapped[int] = mapped_column(Integer, default=0)
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class MarketReplayFillRecord(Base):
+    __tablename__ = "market_replay_fills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(ForeignKey("market_replay_runs.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    side: Mapped[str] = mapped_column(String(16), index=True)
+    price: Mapped[float] = mapped_column(Float)
+    qty: Mapped[float] = mapped_column(Float)
+    fee_quote: Mapped[float] = mapped_column(Float, default=0.0)
+    realized_pnl_quote: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class InstrumentSpecRecord(Base):
     __tablename__ = "instrument_specs"
 
