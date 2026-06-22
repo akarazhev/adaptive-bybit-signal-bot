@@ -56,6 +56,16 @@ they are not loaded daily because current repo evidence does not justify them.
   for production-ready planning.
 - `openspec/specs/*/spec.md` - source specifications for the trading safety
   boundary and production governance.
+- `.github/workflows/ci.yml` - GitHub Actions gate for OpenSpec validation,
+  compileall, pytest, ruff, mypy, and container build.
+- `.github/workflows/codeql.yml` - CodeQL analysis for Python.
+- `.github/workflows/codex-review.yml` and `.github/codex/prompts/review.md` -
+  manual Codex review workflow for trusted maintainers with `OPENAI_API_KEY`.
+- `.github/dependabot.yml` - weekly dependency update checks for Python,
+  GitHub Actions, and container dependencies.
+- `.github/pull_request_template.md`, `.github/ISSUE_TEMPLATE/*`,
+  `.github/CODEOWNERS`, and `.github/SECURITY.md` - GitHub collaboration,
+  ownership, and reporting surfaces.
 
 ## OpenSpec Production Configuration
 
@@ -77,6 +87,34 @@ openspec validate --all --strict --no-interactive
 Use `/opsx:propose` or the equivalent OpenSpec CLI workflow before implementation
 so proposals, specs, designs, and tasks inherit the repository safety and
 production-readiness rules.
+
+## GitHub/Codex Production Configuration
+
+The repository-local GitHub configuration is designed to be safe without remote
+administrator state:
+
+- CI runs offline-safe validation and does not use live Bybit or Alternative.me
+  access.
+- CodeQL runs with read-only contents and `security-events: write`.
+- The Codex review workflow is manual (`workflow_dispatch`) so trusted
+  maintainers decide when to spend API budget and expose the pull request to
+  Codex. It requires `OPENAI_API_KEY` as a repository secret.
+- Codex review also uses `AGENTS.md` Review Guidelines and
+  `.github/codex/prompts/review.md` to focus on production safety issues.
+- Remote repository controls such as branch protection, required status checks,
+  GitHub secret creation, and Codex cloud automatic reviews still need an
+  authenticated GitHub session or repository administrator action.
+
+Recommended remote follow-up after `gh auth login`:
+
+```bash
+gh secret set OPENAI_API_KEY
+```
+
+Then configure branch protection in GitHub settings to require the CI jobs
+`Python checks`, `Container build`, and CodeQL analysis before merging to
+`main`. Enable Codex cloud code review and automatic reviews from Codex settings
+when the repository is connected to Codex cloud.
 
 ## Verification Expectation
 

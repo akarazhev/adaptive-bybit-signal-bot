@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node for OpenSpec
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenSpec
+        run: npm install --global @fission-ai/openspec@1.4.1
+
+      - name: Install Python package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Validate OpenSpec artifacts
+        run: openspec validate --all --strict --no-interactive
+
+      - name: Compile Python sources
+        run: python -m compileall -q src tests
+
+      - name: Run tests
+        run: PYTHONPATH=src pytest
+
+      - name: Run ruff
+        run: ruff check .
+
+      - name: Run mypy
+        run: mypy src
+
+  container:
+    name: Container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Build production image
+        run: docker build -t adaptive-bybit-signal-bot -f Containerfile .

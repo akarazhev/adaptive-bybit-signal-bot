@@ -32,6 +32,8 @@ context: |
   - Pydantic Settings from .env; never inspect, print, or commit local .env.
   - Podman deployment via Containerfile, compose.yaml, compose.rest.yaml, and
     compose.recorder.yaml.
+  - GitHub configuration under .github/ provides CI, CodeQL, Dependabot,
+    issue/PR templates, CODEOWNERS, SECURITY.md, and manual Codex PR review.
   - Tests use pytest; quality gates are compileall, ruff, and strict mypy.
 
   Architecture boundaries:
@@ -50,6 +52,10 @@ context: |
     or explicit integration gates.
   - Deployment changes must consider health checks, restart behavior, resource
     usage, logs, rollback, and recorder storage growth.
+  - GitHub Actions must remain least-privilege and must not expose secrets to
+    untrusted pull request contexts.
+  - Codex review automation should run from trusted maintainer action or Codex
+    cloud settings, and should use AGENTS.md Review Guidelines.
   - New persistent schema/data-store behavior needs migration and rollback
     reasoning even when implemented through SQLAlchemy metadata rather than
     Alembic.
@@ -72,10 +78,12 @@ rules:
     - Document validation at system boundaries, secret handling, failure modes, and rollback for security-sensitive or deployment changes.
     - For persistence changes, describe schema compatibility, data backfill needs, and rollback behavior.
     - For runtime/compose changes, document health, restart policy, resource/storage implications, and operator commands.
+    - For GitHub Actions or Codex automation changes, document trigger safety, token permissions, required secrets, and fork/PR behavior.
     - Prefer existing module boundaries and repository/service abstractions over new cross-cutting shortcuts.
   tasks:
     - Include failing tests before behavior changes, then implementation, then refactor/cleanup.
     - Include PYTHONPATH=src pytest, python -m compileall -q src tests, ruff check ., and mypy src as handoff checks unless explicitly out of scope.
     - Add podman build -t adaptive-bybit-signal-bot -f Containerfile . and podman compose config when deployment files change.
+    - Add GitHub workflow validation, least-privilege permission review, and secret exposure review when .github workflows change.
     - Add doc/spec updates when architecture, safety guarantees, runbooks, compose topology, or roadmap behavior changes.
     - Include a security-review task for credentials, account sync, API endpoints, Bybit adapter changes, or any trading-adjacent write behavior.

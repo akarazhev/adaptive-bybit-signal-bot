@@ -50,6 +50,25 @@ production safety model.
 - Run `openspec validate --all --strict --no-interactive` before handoff when
   OpenSpec artifacts change.
 
+## Review Guidelines
+
+Codex code review in GitHub should prioritize P0/P1 issues only.
+
+- Flag any path that could place, cancel, amend, submit, transfer, withdraw, set
+  leverage, or otherwise execute on Bybit.
+- Flag any weakening of the read-only/order-intent boundary, credential
+  handling, `.env` secrecy, or `BYBIT_ALLOW_READ_WRITE_KEY=false` default.
+- Flag state-changing API endpoints unless they include explicit authorization,
+  validation, rate limiting, and security review.
+- Flag persistence changes that do not preserve both SQLite standalone and
+  PostgreSQL compose behavior.
+- Flag runtime/compose/recorder changes that make high-volume recording
+  default-on or create unsafe restart, storage, or rollback behavior.
+- Flag missing OpenSpec artifacts, tests, or verification for production-facing
+  changes.
+- Do not block on style-only issues unless they hide a correctness, safety, or
+  operability problem.
+
 ## Non-Negotiable Safety Invariants
 
 - Do not add direct exchange execution methods, including:
