@@ -27,7 +27,7 @@ Do not add direct order placement/cancel/amend/withdraw/transfer functionality.
 
 ```text
 Ты работаешь над Python-проектом adaptive-bybit-signal-bot v0.6.
-Прочитай README.md, pyproject.toml и docs/specs/*.md.
+Прочитай README.md, pyproject.toml и doc/spec/*.md.
 Сохрани safety-инвариант: бот не размещает/отменяет/изменяет ордера на Bybit, только пишет локальные order intents.
 Следующая задача: реализовать v0.7 Strategy Metrics & Reporting согласно 08_NEXT_ROADMAP_V0.7_PLUS.md.
 Сначала создай план, затем внеси изменения маленькими коммитоподобными шагами.
@@ -151,7 +151,9 @@ Test files:
 tests/test_indicators.py
 tests/test_regime.py
 tests/test_strategy.py
+tests/test_strategy_more.py
 tests/test_repository.py
+tests/test_repository_more.py
 tests/test_signing.py
 tests/test_instruments.py
 tests/test_paper_trading.py
@@ -160,16 +162,22 @@ tests/test_bybit_instruments.py
 tests/test_local_orderbook.py
 tests/test_backtesting.py
 tests/test_cli_smoke.py
+tests/test_db.py
+tests/test_exchange_client.py
+tests/test_feature_engine_more.py
 tests/test_historical_klines.py
 tests/test_sentiment.py
 tests/test_service_runtime.py
+tests/test_services.py
+tests/test_maintenance.py
+tests/test_api_config_cli.py
 tests/test_recording_replay.py
 ```
 
 v0.6 baseline:
 
 ```text
-40 passed
+82 passed
 ```
 
 ## Coding conventions
@@ -392,4 +400,3 @@ class StrategyEvaluationReport:
 - Version bumped to 0.7.0.
 - Safety model unchanged.
 ```
-

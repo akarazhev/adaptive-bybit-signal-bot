@@ -200,7 +200,7 @@ def test_cli_market_recording_and_replay_commands(
     )
     repository.finish_market_recording_session(
         session_id,
-        status="finished",
+        status="completed",
         event_count=1,
         bytes_written=10,
         ended_at=started_at + timedelta(seconds=1),
@@ -209,7 +209,7 @@ def test_cli_market_recording_and_replay_commands(
 
     async def fake_record_market_forever(**kwargs: Any) -> dict[str, Any]:
         calls.append(("record", kwargs["symbols"]))
-        return {"id": "recording", "status": "finished"}
+        return {"id": "recording", "status": "completed"}
 
     class FakeMarketReplayRunner:
         def __init__(self, **kwargs: Any) -> None:

@@ -195,10 +195,10 @@ def test_record_market_forever_persists_finite_stream(
         )
     )
 
-    assert result["status"] == "finished"
+    assert result["status"] == "completed"
     assert result["event_count"] == 2
     assert len(list(read_market_events(result["file_path"]))) == 2
-    assert repository.list_service_heartbeats(limit=1)[0]["status"] == "finished"
+    assert repository.list_service_heartbeats(limit=1)[0]["status"] == "completed"
 
 
 def test_repository_persists_market_recording_and_replay(tmp_path: Path) -> None:
@@ -217,7 +217,7 @@ def test_repository_persists_market_recording_and_replay(tmp_path: Path) -> None
     )
     repo.finish_market_recording_session(
         session_id,
-        status="finished",
+        status="completed",
         event_count=3,
         bytes_written=123,
         ended_at=started_at + timedelta(seconds=5),

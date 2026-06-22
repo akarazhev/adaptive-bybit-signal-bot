@@ -88,7 +88,7 @@ async def record_market_forever(
     client = BybitPublicWebSocketClient(url=settings.bybit_public_ws_spot_url)
     event_count = 0
     bytes_written = 0
-    status = "finished"
+    status = "completed"
     last_heartbeat = 0.0
     last_update = 0
     loop_started = time.monotonic()

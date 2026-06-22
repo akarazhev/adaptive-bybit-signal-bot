@@ -520,7 +520,7 @@ Current v0.6 checks reported:
 
 ```text
 pytest -q
-40 passed
+82 passed
 
 python -m compileall -q src tests
 OK
@@ -561,4 +561,3 @@ Do not break:
 9. Replay works offline from file.
 10. API remains read-only.
 ```
-
