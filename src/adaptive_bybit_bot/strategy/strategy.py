@@ -5,11 +5,14 @@ from typing import Protocol
 
 from adaptive_bybit_bot.domain.enums import Regime, Side, SignalAction
 from adaptive_bybit_bot.domain.models import (
+    FearGreedContext,
+    FearGreedValue,
     FeatureSet,
     InstrumentSpec,
     PositionState,
     SignalDecision,
 )
+from adaptive_bybit_bot.sentiment.policy import FearGreedSentimentPolicy, SentimentModifiers
 from adaptive_bybit_bot.strategy.order_pricing import bps_diff, clamp, round_price, round_qty
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment
 from adaptive_bybit_bot.strategy.risk import RiskConfig
@@ -43,10 +46,12 @@ class StrategyEngine:
         *,
         instrument: InstrumentSpec | None = None,
         price_tick_size: float = 0.01,
+        sentiment_policy: FearGreedSentimentPolicy | None = None,
     ) -> None:
         self.risk = risk
         self.instrument = instrument or InstrumentSpec(symbol="", price_tick_size=price_tick_size)
         self.price_tick_size = self.instrument.price_tick_size or price_tick_size
+        self.sentiment_policy = sentiment_policy or FearGreedSentimentPolicy()
 
     def evaluate(
         self,
@@ -57,8 +62,14 @@ class StrategyEngine:
         active_buy: ActiveIntentLike | None = None,
         active_sell: ActiveIntentLike | None = None,
         now: datetime | None = None,
+        sentiment: FearGreedContext | FearGreedValue | None = None,
     ) -> SignalDecision:
         decision_time = now or features.ts
+        sentiment_modifiers = self.sentiment_policy.modifiers(
+            symbol=features.symbol,
+            sentiment=sentiment,
+            now=decision_time,
+        )
         if position.is_open:
             if active_buy is not None:
                 return SignalDecision(
@@ -79,6 +90,7 @@ class StrategyEngine:
                 position,
                 active_sell,
                 now=decision_time,
+                sentiment_modifiers=sentiment_modifiers,
             )
 
         if active_sell is not None:
@@ -95,15 +107,16 @@ class StrategyEngine:
                 replaces_intent_id=active_sell.id,
             )
 
-        return self._evaluate_buy_side(features, regime, active_buy)
+        return self._evaluate_buy_side(features, regime, active_buy, sentiment_modifiers)
 
     def _evaluate_buy_side(
         self,
         features: FeatureSet,
         regime: RegimeAssessment,
         active_buy: ActiveIntentLike | None,
+        sentiment_modifiers: SentimentModifiers,
     ) -> SignalDecision:
-        draft = self._build_buy_intent(features, regime)
+        draft = self._build_buy_intent(features, regime, sentiment_modifiers)
         if active_buy is None:
             return draft
 
@@ -134,7 +147,7 @@ class StrategyEngine:
                 confidence=draft.confidence,
                 expected_edge_bps=draft.expected_edge_bps,
                 reason=[f"buy_reprice_threshold:{diff:.2f}bps", *draft.reason],
-                ttl_seconds=self.risk.order_ttl_seconds,
+                ttl_seconds=draft.ttl_seconds,
                 replaces_intent_id=active_buy.id,
                 metadata=draft.metadata,
             )
@@ -147,10 +160,15 @@ class StrategyEngine:
             expected_edge_bps=draft.expected_edge_bps,
         )
 
-    def _build_buy_intent(self, features: FeatureSet, regime: RegimeAssessment) -> SignalDecision:
-        reasons: list[str] = [*regime.reason]
+    def _build_buy_intent(
+        self,
+        features: FeatureSet,
+        regime: RegimeAssessment,
+        sentiment_modifiers: SentimentModifiers,
+    ) -> SignalDecision:
+        reasons: list[str] = [*regime.reason, *self._sentiment_reason(sentiment_modifiers)]
         expected_edge_bps = self._expected_buy_edge_bps(features, regime.regime)
-        required_edge_bps = self.risk.required_buy_edge_bps
+        required_edge_bps = self.risk.required_buy_edge_bps + sentiment_modifiers.extra_edge_bps
 
         allowed_regimes = {Regime.RANGE, Regime.UPTREND_PULLBACK}
         if regime.regime not in allowed_regimes:
@@ -202,7 +220,10 @@ class StrategyEngine:
                 expected_edge_bps=expected_edge_bps,
             )
 
-        price = self._desired_buy_price(features)
+        price = self._desired_buy_price(
+            features,
+            buy_distance_multiplier=sentiment_modifiers.buy_distance_multiplier,
+        )
         if price <= 0:
             return SignalDecision.hold(
                 features.symbol,
@@ -212,7 +233,8 @@ class StrategyEngine:
                 expected_edge_bps=expected_edge_bps,
             )
 
-        qty = self._normalize_qty(self.risk.order_quote_usdt / price)
+        adjusted_order_quote = self.risk.order_quote_usdt * sentiment_modifiers.size_multiplier
+        qty = self._normalize_qty(adjusted_order_quote / price)
         validation_errors = self._validate_order(price=price, qty=qty)
         if validation_errors:
             return SignalDecision.hold(
@@ -224,8 +246,10 @@ class StrategyEngine:
             )
 
         confidence = clamp(
-            (expected_edge_bps / max(required_edge_bps * 1.8, 1)) * regime.confidence,
-            0.25,
+            (expected_edge_bps / max(required_edge_bps * 1.8, 1))
+            * regime.confidence
+            * sentiment_modifiers.confidence_multiplier,
+            0.20,
             0.92,
         )
         reasons.extend(
@@ -245,14 +269,17 @@ class StrategyEngine:
             confidence=confidence,
             expected_edge_bps=expected_edge_bps,
             reason=reasons,
-            ttl_seconds=self.risk.order_ttl_seconds,
+            ttl_seconds=sentiment_modifiers.adjusted_ttl(self.risk.order_ttl_seconds),
             metadata={
                 "break_even_bps": self.risk.maker_roundtrip_break_even_bps,
                 "required_edge_bps": required_edge_bps,
+                "base_required_edge_bps": self.risk.required_buy_edge_bps,
+                "adjusted_order_quote_usdt": adjusted_order_quote,
                 "vwap_deviation_bps": features.vwap_deviation_bps,
                 "orderbook_imbalance": features.orderbook_imbalance,
                 "trade_imbalance": features.trade_imbalance,
                 "instrument": self._instrument_metadata(),
+                "sentiment": self._sentiment_metadata(sentiment_modifiers),
             },
         )
 
@@ -264,8 +291,15 @@ class StrategyEngine:
         active_sell: ActiveIntentLike | None,
         *,
         now: datetime,
+        sentiment_modifiers: SentimentModifiers,
     ) -> SignalDecision:
-        draft = self._build_sell_intent(features, regime, position, now=now)
+        draft = self._build_sell_intent(
+            features,
+            regime,
+            position,
+            now=now,
+            sentiment_modifiers=sentiment_modifiers,
+        )
         if active_sell is None:
             return draft
 
@@ -290,7 +324,7 @@ class StrategyEngine:
                 confidence=draft.confidence,
                 expected_edge_bps=draft.expected_edge_bps,
                 reason=[f"sell_reprice_threshold:{diff:.2f}bps", *draft.reason],
-                ttl_seconds=self.risk.order_ttl_seconds,
+                ttl_seconds=draft.ttl_seconds,
                 replaces_intent_id=active_sell.id,
                 metadata=draft.metadata,
             )
@@ -310,6 +344,7 @@ class StrategyEngine:
         position: PositionState,
         *,
         now: datetime,
+        sentiment_modifiers: SentimentModifiers,
     ) -> SignalDecision:
         if not position.is_open:
             return SignalDecision.hold(
@@ -322,8 +357,15 @@ class StrategyEngine:
 
         pnl_bps = position.unrealized_pnl_bps(features.last_price)
         age_seconds = self._position_age_seconds(position, now=now)
-        target_bps = self.risk.target_sell_profit_bps
-        reasons = [*regime.reason, f"unrealized_pnl:{pnl_bps:.2f}bps"]
+        target_bps = max(
+            self.risk.maker_roundtrip_break_even_bps + self.risk.safety_buffer_bps,
+            self.risk.target_sell_profit_bps * sentiment_modifiers.sell_target_multiplier,
+        )
+        reasons = [
+            *regime.reason,
+            *self._sentiment_reason(sentiment_modifiers),
+            f"unrealized_pnl:{pnl_bps:.2f}bps",
+        ]
 
         risk_exit = False
         if pnl_bps <= -self.risk.max_unrealized_loss_bps:
@@ -371,6 +413,7 @@ class StrategyEngine:
                     "target_sell_profit_bps": target_bps,
                     "instrument": self._instrument_metadata(),
                     "instrument_filter_warnings": filter_warnings,
+                    "sentiment": self._sentiment_metadata(sentiment_modifiers),
                 },
             )
 
@@ -412,7 +455,11 @@ class StrategyEngine:
             (price / position.avg_entry - 1) * 10_000
             - self.risk.maker_roundtrip_break_even_bps
         )
-        confidence = clamp(0.55 + max(expected_net_bps, 0) / 120, 0.55, 0.90)
+        confidence = clamp(
+            (0.55 + max(expected_net_bps, 0) / 120) * sentiment_modifiers.confidence_multiplier,
+            0.45,
+            0.90,
+        )
         reasons.extend(
             [
                 f"target_sell_profit:{target_bps:.2f}bps",
@@ -429,7 +476,7 @@ class StrategyEngine:
             confidence=confidence,
             expected_edge_bps=expected_net_bps,
             reason=reasons,
-            ttl_seconds=self.risk.order_ttl_seconds,
+            ttl_seconds=sentiment_modifiers.adjusted_ttl(self.risk.order_ttl_seconds),
             metadata={
                 "risk_exit": False,
                 "avg_entry": position.avg_entry,
@@ -437,12 +484,22 @@ class StrategyEngine:
                 "break_even_bps": self.risk.maker_roundtrip_break_even_bps,
                 "instrument": self._instrument_metadata(),
                 "instrument_filter_warnings": filter_warnings,
+                "sentiment": self._sentiment_metadata(sentiment_modifiers),
             },
         )
 
-    def _desired_buy_price(self, features: FeatureSet) -> float:
+    def _desired_buy_price(
+        self,
+        features: FeatureSet,
+        *,
+        buy_distance_multiplier: float = 1.0,
+    ) -> float:
         atr_bps = (features.atr_pct or 0.0) * 100
-        offset_bps = clamp(max(features.spread_bps * 0.75, atr_bps * 0.08, 4.0), 4.0, 35.0)
+        offset_bps = clamp(
+            max(features.spread_bps * 0.75, atr_bps * 0.08, 4.0) * buy_distance_multiplier,
+            4.0,
+            60.0,
+        )
         raw_price = features.mid_price * (1 - offset_bps / 10_000)
         if features.best_bid is not None:
             raw_price = min(raw_price, features.best_bid)
@@ -513,6 +570,18 @@ class StrategyEngine:
             "qty_step": self.instrument.qty_step,
             "min_order_amount_quote": self.instrument.min_order_amount_quote,
         }
+
+    @staticmethod
+    def _sentiment_reason(modifiers: SentimentModifiers) -> list[str]:
+        if modifiers.active or modifiers.stale:
+            return list(modifiers.reason)
+        return []
+
+    @staticmethod
+    def _sentiment_metadata(modifiers: SentimentModifiers) -> dict[str, object] | None:
+        if modifiers.active or modifiers.stale:
+            return modifiers.as_dict()
+        return None
 
     @staticmethod
     def _position_age_seconds(

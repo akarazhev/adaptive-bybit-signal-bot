@@ -9,12 +9,22 @@ from typing import Any
 from adaptive_bybit_bot.config import Settings
 from adaptive_bybit_bot.data.repositories import BotRepository
 from adaptive_bybit_bot.domain.enums import Side
-from adaptive_bybit_bot.domain.models import Candle, InstrumentSpec, MarketSnapshot, SignalDecision
+from adaptive_bybit_bot.domain.models import (
+    Candle,
+    FearGreedContext,
+    InstrumentSpec,
+    MarketSnapshot,
+    SignalDecision,
+)
 from adaptive_bybit_bot.exchange.bybit_client import BybitRestClient
 from adaptive_bybit_bot.exchange.bybit_ws import BybitPublicWebSocketClient
 from adaptive_bybit_bot.features.engine import FeatureEngine
 from adaptive_bybit_bot.market_data.ws_cache import WebSocketMarketDataCache
-from adaptive_bybit_bot.services.factory import risk_config_from_settings
+from adaptive_bybit_bot.sentiment.service import get_fear_greed_context_for_strategy
+from adaptive_bybit_bot.services.factory import (
+    fear_greed_policy_from_settings,
+    risk_config_from_settings,
+)
 from adaptive_bybit_bot.services.market_loop import _load_instrument_or_cached_fallback
 from adaptive_bybit_bot.services.paper_trading import PaperFillResult, PaperFillSimulator
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment, RegimeClassifier
@@ -32,6 +42,7 @@ class WsShadowCycleResult:
     instrument: InstrumentSpec
     paper_fills: list[PaperFillResult] = field(default_factory=list)
     cache_diagnostics: dict[str, Any] = field(default_factory=dict)
+    sentiment: FearGreedContext | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +59,7 @@ class WsShadowCycleResult:
             "instrument": self.instrument.as_dict(),
             "paper_fills": [fill.as_dict() for fill in self.paper_fills],
             "cache": self.cache_diagnostics,
+            "sentiment": self.sentiment.as_dict() if self.sentiment else None,
         }
 
 
@@ -193,15 +205,26 @@ async def evaluate_ws_snapshot_once(
         ts=features.ts,
     )
 
+    sentiment = await get_fear_greed_context_for_strategy(
+        settings=settings,
+        repository=repository,
+        now=features.ts,
+    )
+
     position = repository.get_position_state(snapshot.symbol)
     active_buy = repository.active_intent(snapshot.symbol, Side.BUY)
     active_sell = repository.active_intent(snapshot.symbol, Side.SELL)
-    decision = StrategyEngine(risk, instrument=instrument).evaluate(
+    decision = StrategyEngine(
+        risk,
+        instrument=instrument,
+        sentiment_policy=fear_greed_policy_from_settings(settings),
+    ).evaluate(
         features=features,
         regime=regime,
         position=position,
         active_buy=active_buy,
         active_sell=active_sell,
+        sentiment=sentiment,
     )
     affected_intent_id = repository.apply_signal(decision, strategy_version="v1-ws")
     return WsShadowCycleResult(
@@ -212,6 +235,7 @@ async def evaluate_ws_snapshot_once(
         instrument=instrument,
         paper_fills=paper_fills,
         cache_diagnostics=cache_diagnostics or {},
+        sentiment=sentiment,
     )
 
 

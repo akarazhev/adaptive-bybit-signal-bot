@@ -6,7 +6,7 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
 
 > Engineering scaffold only, not financial advice. Run offline backtests and paper/live-shadow mode first, then tune parameters from your own statistics before using real capital.
 
-## Implemented in v0.3
+## Implemented in v0.4
 
 ### Public market data
 
@@ -31,6 +31,18 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
   - ticker state
   - local orderbook state
   - diagnostics via CLI
+
+### Sentiment overlay
+
+- Optional Alternative.me Crypto Fear & Greed Index integration:
+  - `fetch-fng` caches current/history values from `/fng/`
+  - `list-fng` shows cached values with attribution
+  - `/sentiment/fng` exposes cached values via read-only API
+  - signal metadata records the applied sentiment modifier
+- The index is used only as a **risk/aggressiveness overlay**, not as a standalone buy/sell signal.
+- BTC uses the full sentiment weight by default. ETH uses a reduced weight because the current Alternative.me index is primarily a Bitcoin/crypto-market sentiment measure.
+- Required attribution is included in CLI/API output and metadata: `Fear & Greed Index data source: Alternative.me`.
+- Backtests can use cached historical FNG values when `FNG_ENABLED=true` and values have been fetched before running the backtest.
 
 ### Strategy and ledger
 
@@ -131,13 +143,13 @@ Bybit public/read-only REST + public WS
           ↓
 Exchange adapters
           ↓
-MarketSnapshot + InstrumentSpec + WS cache
+MarketSnapshot + InstrumentSpec + WS cache + FNG sentiment cache
           ↓
 FeatureEngine
           ↓
 RegimeClassifier
           ↓
-StrategyEngine
+StrategyEngine + SentimentPolicy
           ↓
 BotRepository
           ↓
@@ -209,6 +221,7 @@ curl http://localhost:8080/instruments
 curl http://localhost:8080/positions
 curl http://localhost:8080/paper-fills
 curl http://localhost:8080/backtests
+curl http://localhost:8080/sentiment/fng
 ```
 
 Or with compose:
@@ -224,6 +237,8 @@ podman compose up --build api
 ```bash
 adaptive-bybit-bot refresh-instruments --symbols BTCUSDT,ETHUSDT
 adaptive-bybit-bot list-instruments
+adaptive-bybit-bot fetch-fng --limit 30
+adaptive-bybit-bot list-fng
 adaptive-bybit-bot run-once --symbol BTCUSDT
 adaptive-bybit-bot run --symbols BTCUSDT,ETHUSDT
 adaptive-bybit-bot run-ws --symbols BTCUSDT,ETHUSDT
@@ -265,6 +280,35 @@ adaptive-bybit-bot backtest-fetch \
 adaptive-bybit-bot list-backtests
 adaptive-bybit-bot list-backtest-fills --limit 100
 ```
+
+## Fear & Greed sentiment overlay
+
+The sentiment module uses the Alternative.me Crypto Fear & Greed Index as a slow context input. It does **not** create buy/sell signals by itself. Instead it changes strategy aggressiveness:
+
+- `Extreme Fear`: smaller size, deeper buy limit, slightly higher required edge.
+- `Fear`: slightly smaller size and slightly deeper buy limit.
+- `Greed`: smaller size, higher required edge, shorter TTL, more defensive sell target.
+- `Extreme Greed`: much smaller size, meaningfully higher required edge, deeper buy limit, shorter TTL.
+
+Enable it in `.env`:
+
+```env
+FNG_ENABLED=true
+FNG_HISTORY_LIMIT=30
+FNG_REFRESH_SECONDS=21600
+FNG_STALE_AFTER_HOURS=36
+```
+
+Fetch/cache values:
+
+```bash
+adaptive-bybit-bot fetch-fng --limit 30
+adaptive-bybit-bot list-fng
+```
+
+When enabled, `run`, `run-once`, `run-ws`, and `backtest-*` will use cached/refreshed sentiment context. For offline backtests, fetch FNG history first so the backtest can look up the value available at each candle timestamp.
+
+Attribution: Fear & Greed Index data source: Alternative.me.
 
 ## Read-only account sync
 
@@ -351,7 +395,17 @@ WS_MAX_TRADES_PER_SYMBOL=2000
 BACKTEST_STARTING_QUOTE=10000
 BACKTEST_WARMUP_CANDLES=240
 BACKTEST_SYNTHETIC_SPREAD_BPS=2
-BACKTEST_FORCE_CLOSE=true
+
+FNG_ENABLED=false
+FNG_REFRESH_SECONDS=21600
+FNG_STALE_AFTER_HOURS=36
+FNG_HISTORY_LIMIT=30
+FNG_BTC_WEIGHT=1.0
+FNG_ETH_WEIGHT=0.6
+FNG_EXTREME_FEAR_SIZE_MULTIPLIER=0.5
+FNG_EXTREME_GREED_SIZE_MULTIPLIER=0.4
+FNG_GREED_EXTRA_EDGE_BPS=8
+FNG_EXTREME_GREED_EXTRA_EDGE_BPS=15
 
 PAPER_TRADING_ENABLED=false
 PAPER_FILL_MODE=trade_through
@@ -404,13 +458,15 @@ python -m adaptive_bybit_bot.cli --help
 1. The WebSocket shadow loop uses public streams only and still refreshes candles from REST.
 2. Candle-level backtesting is an approximation. It does not model queue position, hidden/RPI liquidity, realistic partial fills, or exact intrabar sequencing.
 3. Paper fills are conservative approximations and do not model all exchange microstructure details.
-4. Liquidation WebSocket data is not fully wired into the strategy. Funding and open interest are included as derivatives context only.
-5. The strategy is deliberately conservative and rule-based. Treat it as a baseline to measure, not as a finished alpha model.
+4. Fear & Greed is daily/slow sentiment and should not be interpreted as a real-time entry trigger.
+5. Liquidation WebSocket data is not fully wired into the strategy. Funding and open interest are included as derivatives context only.
+6. The strategy is deliberately conservative and rule-based. Treat it as a baseline to measure, not as a finished alpha model.
 
 ## Suggested next steps
 
 - Add a persistent raw market-data recorder for WebSocket trades/orderbook deltas.
 - Add a more realistic fill model with queue position and partial fills.
 - Add liquidation WebSocket adapter as context only.
+- Add sentiment attribution to a future dashboard/Telegram renderer.
 - Add Telegram notifications for new/cancel/reprice/fill events.
 - Add dashboard with PnL, stuck positions, and signal quality metrics.

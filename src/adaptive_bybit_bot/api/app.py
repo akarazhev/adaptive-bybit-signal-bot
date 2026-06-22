@@ -17,7 +17,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Adaptive Bybit Signal Bot",
-        version="0.3.0",
+        version="0.4.0",
         description="Read-only/order-intent API. No trading endpoint is implemented.",
     )
 
@@ -44,6 +44,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/instruments")
     def instruments(limit: int = 100) -> list[dict[str, Any]]:
         return repository.list_instrument_specs(limit=limit)
+
+
+    @app.get("/sentiment/fng")
+    def sentiment_fng(limit: int = 30) -> dict[str, Any]:
+        return {
+            "attribution": "Fear & Greed Index data source: Alternative.me",
+            "data": repository.list_fear_greed_values(limit=limit),
+        }
 
     @app.get("/backtests")
     def backtests(limit: int = 20) -> list[dict[str, Any]]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -8,6 +9,8 @@ from adaptive_bybit_bot.domain.enums import OrderIntentStatus, Side, SignalActio
 from adaptive_bybit_bot.domain.models import (
     Candle,
     DerivativesContext,
+    FearGreedContext,
+    FearGreedValue,
     InstrumentSpec,
     MarketSnapshot,
     OrderBook,
@@ -16,6 +19,7 @@ from adaptive_bybit_bot.domain.models import (
     SignalDecision,
 )
 from adaptive_bybit_bot.features.engine import FeatureEngine
+from adaptive_bybit_bot.sentiment.policy import FearGreedSentimentPolicy
 from adaptive_bybit_bot.strategy.regime import RegimeClassifier
 from adaptive_bybit_bot.strategy.risk import RiskConfig
 from adaptive_bybit_bot.strategy.strategy import StrategyEngine
@@ -53,6 +57,7 @@ class BacktestConfig:
     fill_model: str = "touch"
     interval: str = "1"
     force_close: bool = True
+    sentiment_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -64,6 +69,7 @@ class BacktestConfig:
             "fill_model": self.fill_model,
             "interval": self.interval,
             "force_close": self.force_close,
+            "sentiment_enabled": self.sentiment_enabled,
         }
 
 
@@ -123,6 +129,7 @@ class BacktestDecisionEvent:
     confidence: float
     expected_edge_bps: float
     reason: list[str]
+    metadata: dict[str, object] | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -134,6 +141,7 @@ class BacktestDecisionEvent:
             "confidence": self.confidence,
             "expected_edge_bps": self.expected_edge_bps,
             "reason": self.reason,
+            "metadata": self.metadata,
         }
 
 
@@ -237,10 +245,18 @@ class CandleBacktestRunner:
         risk: RiskConfig,
         instrument: InstrumentSpec,
         config: BacktestConfig | None = None,
+        sentiment_policy: FearGreedSentimentPolicy | None = None,
+        sentiment_provider: Callable[
+            [datetime],
+            FearGreedContext | FearGreedValue | None,
+        ]
+        | None = None,
     ) -> None:
         self.risk = risk
         self.instrument = instrument
         self.config = config or BacktestConfig(maker_fee_bps=risk.spot_maker_fee_bps)
+        self.sentiment_policy = sentiment_policy or FearGreedSentimentPolicy()
+        self.sentiment_provider = sentiment_provider
         if self.config.fill_model not in {"touch", "trade_through"}:
             raise ValueError("fill_model must be 'touch' or 'trade_through'")
 
@@ -265,7 +281,11 @@ class CandleBacktestRunner:
 
         feature_engine = FeatureEngine()
         regime_classifier = RegimeClassifier(self.risk)
-        strategy = StrategyEngine(self.risk, instrument=self.instrument)
+        strategy = StrategyEngine(
+            self.risk,
+            instrument=self.instrument,
+            sentiment_policy=self.sentiment_policy,
+        )
 
         start_index = min(self.config.lookback_candles, len(candles) - 1)
         for index in range(start_index, len(candles)):
@@ -310,6 +330,11 @@ class CandleBacktestRunner:
             )
             features = feature_engine.build(snapshot)
             regime = regime_classifier.classify(features)
+            sentiment = (
+                self.sentiment_provider(ensure_utc(candle.ts))
+                if self.sentiment_provider is not None
+                else None
+            )
             decision = strategy.evaluate(
                 features=features,
                 regime=regime,
@@ -317,6 +342,7 @@ class CandleBacktestRunner:
                 active_buy=active_buy,
                 active_sell=active_sell,
                 now=ensure_utc(candle.ts),
+                sentiment=sentiment,
             )
             decisions.append(
                 BacktestDecisionEvent(
@@ -328,6 +354,7 @@ class CandleBacktestRunner:
                     confidence=decision.confidence,
                     expected_edge_bps=decision.expected_edge_bps,
                     reason=decision.reason,
+                    metadata=decision.metadata,
                 )
             )
             active_buy, active_sell = self._apply_decision(decision, active_buy, active_sell)
@@ -547,7 +574,9 @@ def _intent_from_decision(decision: SignalDecision) -> BacktestIntent:
     if decision.side is None or decision.price is None or decision.qty is None:
         raise ValueError("decision does not contain a complete limit intent")
     expires_at = (
-        decision.ts + timedelta(seconds=decision.ttl_seconds) if decision.ttl_seconds else None
+        decision.ts + timedelta(seconds=decision.ttl_seconds)
+        if decision.ttl_seconds
+        else None
     )
     return BacktestIntent(
         id=decision.replaces_intent_id or str(uuid4()),
@@ -564,12 +593,16 @@ def _limit_touched(intent: BacktestIntent, candle: Candle, fill_model: str) -> b
     if ensure_utc(intent.created_at) >= ensure_utc(candle.ts):
         return False
     if intent.side == Side.BUY.value:
-        if fill_model == "trade_through":
-            return candle.low < intent.limit_price
-        return candle.low <= intent.limit_price
-    if fill_model == "trade_through":
-        return candle.high > intent.limit_price
-    return candle.high >= intent.limit_price
+        return (
+            candle.low < intent.limit_price
+            if fill_model == "trade_through"
+            else candle.low <= intent.limit_price
+        )
+    return (
+        candle.high > intent.limit_price
+        if fill_model == "trade_through"
+        else candle.high >= intent.limit_price
+    )
 
 
 def _max_drawdown_pct(equity_curve: list[float]) -> float:

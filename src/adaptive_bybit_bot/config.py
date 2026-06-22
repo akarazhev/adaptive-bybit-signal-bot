@@ -47,6 +47,30 @@ class Settings(BaseSettings):
     reprice_threshold_bps: float = 4.0
     min_expected_edge_bps: float = 30.0
 
+    fng_enabled: bool = False
+    fng_base_url: str = "https://api.alternative.me"
+    fng_refresh_seconds: int = 21_600
+    fng_stale_after_hours: float = 36.0
+    fng_history_limit: int = 30
+    fng_btc_weight: float = 1.0
+    fng_eth_weight: float = 0.6
+    fng_alt_weight: float = 0.5
+    fng_extreme_fear_size_multiplier: float = 0.5
+    fng_fear_size_multiplier: float = 0.8
+    fng_greed_size_multiplier: float = 0.6
+    fng_extreme_greed_size_multiplier: float = 0.4
+    fng_extreme_fear_extra_edge_bps: float = 5.0
+    fng_greed_extra_edge_bps: float = 8.0
+    fng_extreme_greed_extra_edge_bps: float = 15.0
+    fng_extreme_fear_buy_distance_multiplier: float = 1.25
+    fng_fear_buy_distance_multiplier: float = 1.10
+    fng_greed_buy_distance_multiplier: float = 1.25
+    fng_extreme_greed_buy_distance_multiplier: float = 1.50
+    fng_greed_ttl_multiplier: float = 0.75
+    fng_extreme_greed_ttl_multiplier: float = 0.50
+    fng_greed_sell_target_multiplier: float = 0.92
+    fng_extreme_greed_sell_target_multiplier: float = 0.85
+
     paper_trading_enabled: bool = False
     paper_fill_mode: Annotated[str, Field(pattern="^(trade_through|touch)$")] = "trade_through"
     paper_min_fill_ratio: float = 1.0

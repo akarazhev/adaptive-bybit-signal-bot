@@ -12,6 +12,7 @@ from adaptive_bybit_bot.data.models import (
     BacktestFillRecord,
     BacktestRunRecord,
     ExecutionRecord,
+    FearGreedIndexRecord,
     InstrumentSpecRecord,
     MarketFeatureRecord,
     MarketRegimeRecord,
@@ -23,6 +24,8 @@ from adaptive_bybit_bot.data.models import (
 )
 from adaptive_bybit_bot.domain.enums import OrderIntentStatus, PositionStatus, Side, SignalAction
 from adaptive_bybit_bot.domain.models import (
+    FearGreedContext,
+    FearGreedValue,
     FeatureSet,
     InstrumentSpec,
     PositionState,
@@ -113,6 +116,111 @@ class BotRepository:
     def list_instrument_specs(self, limit: int = 20) -> list[dict[str, Any]]:
         return self.list_recent_instrument_specs(limit=limit)
 
+    def save_fear_greed_value(self, value: FearGreedValue) -> str:
+        """Upsert a Fear & Greed observation by source/timestamp."""
+        with session_scope(self.engine) as session:
+            existing = session.execute(
+                select(FearGreedIndexRecord)
+                .where(
+                    FearGreedIndexRecord.source == value.source,
+                    FearGreedIndexRecord.timestamp == value.timestamp,
+                )
+                .limit(1)
+            ).scalars().first()
+            if existing is not None:
+                existing.value = value.value
+                existing.classification = value.classification
+                existing.time_until_update_seconds = value.time_until_update_seconds
+                existing.fetched_at = value.fetched_at
+                existing.raw_json = _json_safe(value.raw)
+                return existing.id
+            record = FearGreedIndexRecord(
+                source=value.source,
+                value=value.value,
+                classification=value.classification,
+                timestamp=value.timestamp,
+                time_until_update_seconds=value.time_until_update_seconds,
+                fetched_at=value.fetched_at,
+                raw_json=_json_safe(value.raw),
+            )
+            session.add(record)
+            session.flush()
+            return record.id
+
+    def save_fear_greed_values(self, values: list[FearGreedValue]) -> int:
+        count = 0
+        for value in values:
+            self.save_fear_greed_value(value)
+            count += 1
+        return count
+
+    def get_latest_fear_greed_value(
+        self,
+        *,
+        source: str = "alternative.me",
+    ) -> FearGreedValue | None:
+        with session_scope(self.engine) as session:
+            row = session.execute(
+                select(FearGreedIndexRecord)
+                .where(FearGreedIndexRecord.source == source)
+                .order_by(desc(FearGreedIndexRecord.timestamp))
+                .limit(1)
+            ).scalars().first()
+            return _fear_greed_from_record(row) if row else None
+
+    def get_fear_greed_context(
+        self,
+        *,
+        source: str = "alternative.me",
+        limit: int = 30,
+    ) -> FearGreedContext | None:
+        values = self.get_fear_greed_values(source=source, limit=limit)
+        return FearGreedContext.from_values(values)
+
+    def get_fear_greed_at(
+        self,
+        ts: datetime,
+        *,
+        source: str = "alternative.me",
+        history_limit: int = 8,
+    ) -> FearGreedContext | None:
+        """Return the latest FNG context known at or before a timestamp."""
+        with session_scope(self.engine) as session:
+            rows = session.execute(
+                select(FearGreedIndexRecord)
+                .where(
+                    FearGreedIndexRecord.source == source,
+                    FearGreedIndexRecord.timestamp <= ts,
+                )
+                .order_by(desc(FearGreedIndexRecord.timestamp))
+                .limit(max(history_limit, 1))
+            ).scalars().all()
+            return FearGreedContext.from_values([_fear_greed_from_record(row) for row in rows])
+
+    def get_fear_greed_values(
+        self,
+        *,
+        source: str = "alternative.me",
+        limit: int = 30,
+    ) -> list[FearGreedValue]:
+        with session_scope(self.engine) as session:
+            rows = session.execute(
+                select(FearGreedIndexRecord)
+                .where(FearGreedIndexRecord.source == source)
+                .order_by(desc(FearGreedIndexRecord.timestamp))
+                .limit(limit)
+            ).scalars().all()
+            return [_fear_greed_from_record(row) for row in rows]
+
+    def list_fear_greed_values(self, limit: int = 30) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            rows = session.execute(
+                select(FearGreedIndexRecord)
+                .order_by(desc(FearGreedIndexRecord.timestamp))
+                .limit(limit)
+            ).scalars().all()
+            return [_fear_greed_record_to_dict(row) for row in rows]
+
     def save_backtest_result(self, result: Any) -> str:
         """Persist a backtest summary and fill rows.
 
@@ -188,9 +296,11 @@ class BotRepository:
             stmt = select(BacktestFillRecord)
             if run_id:
                 stmt = stmt.where(BacktestFillRecord.run_id == run_id)
-            rows = session.execute(
-                stmt.order_by(desc(BacktestFillRecord.ts)).limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(stmt.order_by(desc(BacktestFillRecord.ts)).limit(limit))
+                .scalars()
+                .all()
+            )
             return [
                 {
                     "id": row.id,
@@ -709,6 +819,25 @@ class BotRepository:
             position.qty = 0.0
             position.status = PositionStatus.CLOSED.value
             position.closed_at = ts
+
+
+def _fear_greed_from_record(record: FearGreedIndexRecord) -> FearGreedValue:
+    return FearGreedValue(
+        source=record.source,
+        value=record.value,
+        classification=record.classification,
+        timestamp=record.timestamp,
+        time_until_update_seconds=record.time_until_update_seconds,
+        fetched_at=record.fetched_at,
+        raw=record.raw_json or {},
+    )
+
+
+def _fear_greed_record_to_dict(row: FearGreedIndexRecord) -> dict[str, Any]:
+    value = _fear_greed_from_record(row)
+    payload = value.as_dict()
+    payload.update({"id": row.id})
+    return payload
 
 
 def _parse_ms(value: Any) -> datetime:

@@ -91,6 +91,24 @@ class InstrumentSpecRecord(Base):
     raw_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class FearGreedIndexRecord(Base):
+    __tablename__ = "sentiment_fng"
+    __table_args__ = (UniqueConstraint("source", "timestamp", name="uq_sentiment_fng_source_ts"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source: Mapped[str] = mapped_column(String(64), default="alternative.me", index=True)
+    value: Mapped[int] = mapped_column(Integer)
+    classification: Mapped[str] = mapped_column(String(64), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    time_until_update_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=now_utc,
+        index=True,
+    )
+    raw_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class SignalRecord(Base):
     __tablename__ = "signals"
 

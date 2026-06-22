@@ -10,10 +10,14 @@ import httpx
 from adaptive_bybit_bot.config import Settings
 from adaptive_bybit_bot.data.repositories import BotRepository
 from adaptive_bybit_bot.domain.enums import Side
-from adaptive_bybit_bot.domain.models import InstrumentSpec, SignalDecision
+from adaptive_bybit_bot.domain.models import FearGreedContext, InstrumentSpec, SignalDecision
 from adaptive_bybit_bot.exchange.bybit_client import BybitApiError, BybitRestClient
 from adaptive_bybit_bot.features.engine import FeatureEngine
-from adaptive_bybit_bot.services.factory import risk_config_from_settings
+from adaptive_bybit_bot.sentiment.service import get_fear_greed_context_for_strategy
+from adaptive_bybit_bot.services.factory import (
+    fear_greed_policy_from_settings,
+    risk_config_from_settings,
+)
 from adaptive_bybit_bot.services.paper_trading import PaperFillResult, PaperFillSimulator
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment, RegimeClassifier
 from adaptive_bybit_bot.strategy.strategy import StrategyEngine
@@ -29,6 +33,7 @@ class CycleResult:
     affected_intent_id: str | None
     instrument: InstrumentSpec = field(default_factory=lambda: InstrumentSpec.fallback(""))
     paper_fills: list[PaperFillResult] = field(default_factory=list)
+    sentiment: FearGreedContext | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -44,6 +49,7 @@ class CycleResult:
             "affected_intent_id": self.affected_intent_id,
             "instrument": self.instrument.as_dict(),
             "paper_fills": [fill.as_dict() for fill in self.paper_fills],
+            "sentiment": self.sentiment.as_dict() if self.sentiment else None,
         }
 
 
@@ -94,15 +100,26 @@ async def run_symbol_once(
         ts=features.ts,
     )
 
+    sentiment = await get_fear_greed_context_for_strategy(
+        settings=settings,
+        repository=repository,
+        now=features.ts,
+    )
+
     position = repository.get_position_state(symbol)
     active_buy = repository.active_intent(symbol, Side.BUY)
     active_sell = repository.active_intent(symbol, Side.SELL)
-    decision = StrategyEngine(risk, instrument=instrument).evaluate(
+    decision = StrategyEngine(
+        risk,
+        instrument=instrument,
+        sentiment_policy=fear_greed_policy_from_settings(settings),
+    ).evaluate(
         features=features,
         regime=regime,
         position=position,
         active_buy=active_buy,
         active_sell=active_sell,
+        sentiment=sentiment,
     )
     affected_intent_id = repository.apply_signal(decision)
     logger.info(
@@ -124,6 +141,7 @@ async def run_symbol_once(
         affected_intent_id=affected_intent_id,
         instrument=instrument,
         paper_fills=paper_fills,
+        sentiment=sentiment,
     )
 
 

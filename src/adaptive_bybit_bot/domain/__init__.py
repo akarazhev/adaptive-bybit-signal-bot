@@ -1,6 +1,8 @@
 from adaptive_bybit_bot.domain.models import (
     Candle,
     DerivativesContext,
+    FearGreedContext,
+    FearGreedValue,
     FeatureSet,
     MarketSnapshot,
     OrderBook,
@@ -13,6 +15,8 @@ from adaptive_bybit_bot.domain.models import (
 __all__ = [
     "Candle",
     "DerivativesContext",
+    "FearGreedContext",
+    "FearGreedValue",
     "FeatureSet",
     "MarketSnapshot",
     "OrderBook",

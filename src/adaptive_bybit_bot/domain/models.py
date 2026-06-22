@@ -160,6 +160,117 @@ class InstrumentSpec:
         }
 
 
+@dataclass(frozen=True)
+class FearGreedValue:
+    """Single Alternative.me Crypto Fear & Greed Index observation.
+
+    The current Alternative.me index is primarily a Bitcoin/crypto-market
+    sentiment measure, not a per-symbol spot signal.
+    """
+
+    value: int
+    classification: str
+    timestamp: datetime
+    source: str = "alternative.me"
+    time_until_update_seconds: int | None = None
+    fetched_at: datetime = field(default_factory=utc_now)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def attribution(self) -> str:
+        return "Fear & Greed Index data source: Alternative.me"
+
+    @property
+    def normalized_classification(self) -> str:
+        return self.classification.strip().lower().replace(" ", "_")
+
+    def age_hours(self, now: datetime | None = None) -> float:
+        current = now or utc_now()
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        ts = self.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return max(0.0, (current.astimezone(UTC) - ts.astimezone(UTC)).total_seconds() / 3600)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "value": self.value,
+            "classification": self.classification,
+            "timestamp": self.timestamp.isoformat(),
+            "time_until_update_seconds": self.time_until_update_seconds,
+            "fetched_at": self.fetched_at.isoformat(),
+            "attribution": self.attribution,
+        }
+
+
+@dataclass(frozen=True)
+class FearGreedContext:
+    """Latest Fear & Greed value plus simple daily momentum deltas."""
+
+    current: FearGreedValue
+    previous_1d: FearGreedValue | None = None
+    previous_7d: FearGreedValue | None = None
+
+    @property
+    def source(self) -> str:
+        return self.current.source
+
+    @property
+    def value(self) -> int:
+        return self.current.value
+
+    @property
+    def classification(self) -> str:
+        return self.current.classification
+
+    @property
+    def timestamp(self) -> datetime:
+        return self.current.timestamp
+
+    @property
+    def time_until_update_seconds(self) -> int | None:
+        return self.current.time_until_update_seconds
+
+    @property
+    def attribution(self) -> str:
+        return self.current.attribution
+
+    @property
+    def delta_1d(self) -> int | None:
+        return self.current.value - self.previous_1d.value if self.previous_1d else None
+
+    @property
+    def delta_7d(self) -> int | None:
+        return self.current.value - self.previous_7d.value if self.previous_7d else None
+
+    def age_hours(self, now: datetime | None = None) -> float:
+        return self.current.age_hours(now)
+
+    def as_dict(self, *, now: datetime | None = None) -> dict[str, Any]:
+        payload = self.current.as_dict()
+        payload.update(
+            {
+                "age_hours": self.age_hours(now),
+                "delta_1d": self.delta_1d,
+                "delta_7d": self.delta_7d,
+                "previous_1d": self.previous_1d.as_dict() if self.previous_1d else None,
+                "previous_7d": self.previous_7d.as_dict() if self.previous_7d else None,
+            }
+        )
+        return payload
+
+    @classmethod
+    def from_values(cls, values: list[FearGreedValue]) -> FearGreedContext | None:
+        if not values:
+            return None
+        ordered = sorted(values, key=lambda item: item.timestamp, reverse=True)
+        current = ordered[0]
+        previous_1d = ordered[1] if len(ordered) > 1 else None
+        previous_7d = ordered[7] if len(ordered) > 7 else None
+        return cls(current=current, previous_1d=previous_1d, previous_7d=previous_7d)
+
 
 @dataclass(frozen=True)
 class DerivativesContext:

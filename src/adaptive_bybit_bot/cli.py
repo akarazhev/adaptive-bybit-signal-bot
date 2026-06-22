@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -17,18 +18,23 @@ from adaptive_bybit_bot.backtesting.historical import fetch_historical_klines, p
 from adaptive_bybit_bot.config import Settings, get_settings
 from adaptive_bybit_bot.data.db import create_database_engine, create_schema
 from adaptive_bybit_bot.data.repositories import BotRepository
-from adaptive_bybit_bot.domain.models import Candle, InstrumentSpec
+from adaptive_bybit_bot.domain.models import Candle, FearGreedContext, InstrumentSpec
 from adaptive_bybit_bot.exchange.bybit_client import BybitRestClient
 from adaptive_bybit_bot.exchange.bybit_ws import BybitPublicWebSocketClient
 from adaptive_bybit_bot.logging_config import configure_logging
+from adaptive_bybit_bot.sentiment.service import refresh_fear_greed_cache
 from adaptive_bybit_bot.services.account_sync import sync_account_once, validate_read_only_key
-from adaptive_bybit_bot.services.factory import risk_config_from_settings
+from adaptive_bybit_bot.services.factory import (
+    fear_greed_policy_from_settings,
+    risk_config_from_settings,
+)
 from adaptive_bybit_bot.services.market_loop import (
     refresh_instruments_once,
     run_forever,
     run_paper_fill_once,
     run_symbol_once,
 )
+from adaptive_bybit_bot.services.paper_trading import PaperFillSimulator
 from adaptive_bybit_bot.services.ws_shadow import (
     collect_ws_cache_for_seconds,
     run_ws_shadow_forever,
@@ -70,21 +76,31 @@ def _backtest_config(settings: Settings, *, symbol: str, interval: str) -> Backt
         maker_fee_bps=settings.spot_maker_fee_bps,
         fill_model="touch",
         force_close=settings.backtest_force_close,
+        sentiment_enabled=settings.fng_enabled,
     )
 
 
 def _run_backtest(
     *,
     settings: Settings,
+    repository: BotRepository,
     symbol: str,
     interval: str,
     candles: list[Candle],
     instrument: InstrumentSpec,
 ) -> BacktestResult:
+    sentiment_provider = None
+    if settings.fng_enabled:
+
+        def sentiment_provider(ts: datetime) -> FearGreedContext | None:
+            return repository.get_fear_greed_at(ts)
+
     runner = CandleBacktestRunner(
         risk=risk_config_from_settings(settings),
         instrument=instrument,
         config=_backtest_config(settings, symbol=symbol, interval=interval),
+        sentiment_policy=fear_greed_policy_from_settings(settings),
+        sentiment_provider=sentiment_provider,
     )
     return runner.run(symbol=symbol.upper(), candles=candles)
 
@@ -201,6 +217,46 @@ def refresh_instruments(
     asyncio.run(_run())
 
 
+
+@app.command("fetch-fng")
+def fetch_fng(
+    limit: Annotated[int, typer.Option(help="Number of daily FNG values to cache")] = 30,
+) -> None:
+    """Fetch and cache Alternative.me Crypto Fear & Greed Index values."""
+    settings = _settings()
+    repository = _repo(settings)
+
+    async def _run() -> None:
+        context = await refresh_fear_greed_cache(
+            settings=settings,
+            repository=repository,
+            limit=limit,
+        )
+        _print_json(context.as_dict() if context else None)
+
+    asyncio.run(_run())
+
+
+@app.command("list-fng")
+def list_fng(limit: Annotated[int, typer.Option(help="Rows to show")] = 30) -> None:
+    """Show cached Fear & Greed Index values with required attribution."""
+    settings = _settings()
+    repository = _repo(settings)
+    rows = repository.list_fear_greed_values(limit=limit)
+    table = Table(title="Crypto Fear & Greed Index — data source: Alternative.me")
+    for column in ["timestamp", "value", "classification", "fetched_at", "source"]:
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            str(row["timestamp"]),
+            str(row["value"]),
+            str(row["classification"]),
+            str(row["fetched_at"]),
+            str(row["source"]),
+        )
+    console.print(table)
+
+
 @app.command("list-instruments")
 def list_instruments(limit: Annotated[int, typer.Option(help="Rows to show")] = 100) -> None:
     """Show persisted exchange instrument constraints."""
@@ -299,6 +355,8 @@ def sync_account(
     asyncio.run(_run())
 
 
+
+
 @app.command("instrument-info")
 def instrument_info(
     symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
@@ -315,6 +373,39 @@ def instrument_info(
         ) as client:
             info = await client.get_instrument_info(symbol.upper(), category="spot")
             _print_json(info.as_dict())
+
+    asyncio.run(_run())
+
+
+@app.command("paper-step")
+def paper_step(
+    symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
+) -> None:
+    """Evaluate active local intents against fresh market data and mark paper fills."""
+    settings = _settings()
+    repository = _repo(settings)
+
+    async def _run() -> None:
+        async with BybitRestClient(
+            base_url=settings.bybit_base_url,
+            api_key=settings.bybit_api_key,
+            api_secret=settings.bybit_api_secret,
+            recv_window=settings.bybit_recv_window,
+        ) as client:
+            snapshot = await client.get_market_snapshot(
+                symbol.upper(),
+                kline_interval=settings.kline_interval,
+                kline_limit=settings.kline_limit,
+                orderbook_limit=settings.orderbook_limit,
+                recent_trades_limit=settings.recent_trades_limit,
+            )
+            fills = PaperFillSimulator(
+                repository,
+                mode=settings.paper_fill_mode,
+                min_fill_ratio=settings.paper_min_fill_ratio,
+                max_trade_age_seconds=settings.paper_max_trade_age_seconds,
+            ).simulate_snapshot(snapshot)
+            _print_json([fill.as_dict() for fill in fills])
 
     asyncio.run(_run())
 
@@ -478,6 +569,7 @@ def backtest_fetch(
             )
             result = _run_backtest(
                 settings=settings,
+                repository=repository,
                 symbol=symbol.upper(),
                 interval=interval,
                 candles=candles,
@@ -510,6 +602,7 @@ def backtest_csv(
     )
     result = _run_backtest(
         settings=settings,
+        repository=repository,
         symbol=symbol.upper(),
         interval=interval,
         candles=candles,

@@ -1,4 +1,4 @@
-.PHONY: test init-db run-once run-ws refresh-instruments paper-fill-once ws-print ws-snapshot backtest-fetch backtest-csv api build run shell
+.PHONY: test init-db run-once run-ws refresh-instruments fetch-fng list-fng paper-fill-once ws-print ws-snapshot backtest-fetch backtest-csv api build run shell
 
 test:
 	PYTHONPATH=src pytest
@@ -14,6 +14,12 @@ run-ws:
 
 refresh-instruments:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli refresh-instruments --symbols BTCUSDT,ETHUSDT
+
+fetch-fng:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli fetch-fng --limit 30
+
+list-fng:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli list-fng --limit 30
 
 paper-fill-once:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli paper-fill-once --symbol BTCUSDT
