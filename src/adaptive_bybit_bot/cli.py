@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -16,7 +17,7 @@ from adaptive_bybit_bot.backtesting import BacktestConfig, BacktestResult, Candl
 from adaptive_bybit_bot.backtesting.csv_io import read_candles_csv, write_candles_csv
 from adaptive_bybit_bot.backtesting.historical import fetch_historical_klines, parse_datetime
 from adaptive_bybit_bot.config import Settings, get_settings
-from adaptive_bybit_bot.data.db import create_database_engine, create_schema
+from adaptive_bybit_bot.data.db import wait_for_database
 from adaptive_bybit_bot.data.repositories import BotRepository
 from adaptive_bybit_bot.domain.models import Candle, FearGreedContext, InstrumentSpec
 from adaptive_bybit_bot.exchange.bybit_client import BybitRestClient
@@ -27,6 +28,11 @@ from adaptive_bybit_bot.services.account_sync import sync_account_once, validate
 from adaptive_bybit_bot.services.factory import (
     fear_greed_policy_from_settings,
     risk_config_from_settings,
+)
+from adaptive_bybit_bot.services.maintenance import (
+    run_fng_loop,
+    run_instrument_loop,
+    run_paper_loop,
 )
 from adaptive_bybit_bot.services.market_loop import (
     refresh_instruments_once,
@@ -51,8 +57,12 @@ def _settings() -> Settings:
 
 
 def _repo(settings: Settings) -> BotRepository:
-    engine = create_database_engine(settings.database_url)
-    create_schema(engine)
+    engine = wait_for_database(
+        settings.database_url,
+        timeout_seconds=settings.db_wait_timeout_seconds,
+        interval_seconds=settings.db_wait_interval_seconds,
+        create=True,
+    )
     return BotRepository(engine)
 
 
@@ -89,7 +99,7 @@ def _run_backtest(
     candles: list[Candle],
     instrument: InstrumentSpec,
 ) -> BacktestResult:
-    sentiment_provider = None
+    sentiment_provider: Callable[[datetime], FearGreedContext | None] | None = None
     if settings.fng_enabled:
 
         def sentiment_provider(ts: datetime) -> FearGreedContext | None:
@@ -109,9 +119,26 @@ def _run_backtest(
 def init_db() -> None:
     """Create database tables."""
     settings = _settings()
-    engine = create_database_engine(settings.database_url)
-    create_schema(engine)
+    wait_for_database(
+        settings.database_url,
+        timeout_seconds=settings.db_wait_timeout_seconds,
+        interval_seconds=settings.db_wait_interval_seconds,
+        create=True,
+    )
     console.print(f"Database initialized: {settings.database_url}")
+
+
+@app.command("wait-db")
+def wait_db() -> None:
+    """Wait until the configured database is reachable and schema is created."""
+    settings = _settings()
+    wait_for_database(
+        settings.database_url,
+        timeout_seconds=settings.db_wait_timeout_seconds,
+        interval_seconds=settings.db_wait_interval_seconds,
+        create=True,
+    )
+    console.print("Database is ready")
 
 
 @app.command("run-once")
@@ -143,6 +170,9 @@ def run_once(
 @app.command("run")
 def run(
     symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+    service_name: Annotated[
+        str, typer.Option(help="Service name used for heartbeat/locks")
+    ] = "bot-rest",
 ) -> None:
     """Run the continuous polling loop."""
     settings = _settings()
@@ -162,6 +192,7 @@ def run(
                 repository=repository,
                 client=client,
                 symbols=selected_symbols,
+                service_name=service_name,
             )
 
     asyncio.run(_run())
@@ -171,6 +202,9 @@ def run(
 def run_ws(
     symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
     seconds: Annotated[int, typer.Option(help="Seconds to run; 0 means forever")] = 0,
+    service_name: Annotated[
+        str, typer.Option(help="Service name used for heartbeat/locks")
+    ] = "ws-shadow",
 ) -> None:
     """Run public WebSocket shadow loop and persist local order intents."""
     settings = _settings()
@@ -191,6 +225,7 @@ def run_ws(
                 rest_client=client,
                 symbols=selected_symbols,
                 seconds=seconds,
+                service_name=service_name,
             )
 
     asyncio.run(_run())
@@ -217,6 +252,32 @@ def refresh_instruments(
     asyncio.run(_run())
 
 
+@app.command("instrument-loop")
+def instrument_loop(
+    symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+    once: Annotated[bool, typer.Option("--once/--loop", help="Run once then exit")] = False,
+    service_name: Annotated[
+        str, typer.Option(help="Service name used for heartbeat")
+    ] = "instrument-sync",
+) -> None:
+    """Continuously refresh Bybit spot instrument constraints."""
+    settings = _settings()
+    repository = _repo(settings)
+    selected_symbols = _parse_symbols(symbols, settings)
+
+    async def _run() -> None:
+        async with BybitRestClient(base_url=settings.bybit_base_url) as client:
+            await run_instrument_loop(
+                settings=settings,
+                repository=repository,
+                client=client,
+                symbols=selected_symbols,
+                service_name=service_name,
+                once=once,
+            )
+
+    asyncio.run(_run())
+
 
 @app.command("fetch-fng")
 def fetch_fng(
@@ -233,6 +294,26 @@ def fetch_fng(
             limit=limit,
         )
         _print_json(context.as_dict() if context else None)
+
+    asyncio.run(_run())
+
+
+@app.command("fng-loop")
+def fng_loop(
+    once: Annotated[bool, typer.Option("--once/--loop", help="Run once then exit")] = False,
+    service_name: Annotated[str, typer.Option(help="Service name used for heartbeat")] = "fng-sync",
+) -> None:
+    """Continuously refresh cached Alternative.me Fear & Greed values."""
+    settings = _settings()
+    repository = _repo(settings)
+
+    async def _run() -> None:
+        await run_fng_loop(
+            settings=settings,
+            repository=repository,
+            service_name=service_name,
+            once=once,
+        )
 
     asyncio.run(_run())
 
@@ -310,6 +391,33 @@ def paper_fill_once(
     asyncio.run(_run())
 
 
+@app.command("paper-loop")
+def paper_loop(
+    symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+    once: Annotated[bool, typer.Option("--once/--loop", help="Run once then exit")] = False,
+    service_name: Annotated[
+        str, typer.Option(help="Service name used for heartbeat")
+    ] = "paper-runner",
+) -> None:
+    """Continuously simulate fills for active local order intents."""
+    settings = _settings()
+    repository = _repo(settings)
+    selected_symbols = _parse_symbols(symbols, settings)
+
+    async def _run() -> None:
+        async with BybitRestClient(base_url=settings.bybit_base_url) as client:
+            await run_paper_loop(
+                settings=settings,
+                repository=repository,
+                client=client,
+                symbols=selected_symbols,
+                service_name=service_name,
+                once=once,
+            )
+
+    asyncio.run(_run())
+
+
 @app.command("validate-key")
 def validate_key() -> None:
     """Validate that the configured API key is read-only."""
@@ -353,8 +461,6 @@ def sync_account(
             _print_json(result.as_dict())
 
     asyncio.run(_run())
-
-
 
 
 @app.command("instrument-info")
@@ -506,12 +612,10 @@ def ws_book(
 def download_klines(
     symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
     start: Annotated[
-        str,
-        typer.Option(help="UTC start, e.g. 2026-06-01 or ISO timestamp"),
+        str, typer.Option(help="UTC start, e.g. 2026-06-01 or ISO timestamp")
     ] = "2026-06-01",
     end: Annotated[
-        str,
-        typer.Option(help="UTC end, e.g. 2026-06-02 or ISO timestamp"),
+        str, typer.Option(help="UTC end, e.g. 2026-06-02 or ISO timestamp")
     ] = "2026-06-02",
     interval: Annotated[str, typer.Option(help="Bybit kline interval, e.g. 1,5,15,60,D")] = "1",
     output: Annotated[Path, typer.Option(help="Output CSV path")] = Path("data/klines.csv"),
@@ -540,12 +644,10 @@ def download_klines(
 def backtest_fetch(
     symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
     start: Annotated[
-        str,
-        typer.Option(help="UTC start, e.g. 2026-06-01 or ISO timestamp"),
+        str, typer.Option(help="UTC start, e.g. 2026-06-01 or ISO timestamp")
     ] = "2026-06-01",
     end: Annotated[
-        str,
-        typer.Option(help="UTC end, e.g. 2026-06-02 or ISO timestamp"),
+        str, typer.Option(help="UTC end, e.g. 2026-06-02 or ISO timestamp")
     ] = "2026-06-02",
     interval: Annotated[str, typer.Option(help="Bybit kline interval, e.g. 1,5,15,60,D")] = "1",
     save: Annotated[bool, typer.Option("--save/--no-save", help="Persist summary to DB")] = True,
@@ -588,8 +690,7 @@ def backtest_csv(
     symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
     interval: Annotated[str, typer.Option(help="Bybit kline interval used in the CSV")] = "1",
     input_path: Annotated[
-        Path,
-        typer.Option("--input", help="CSV with ts,open,high,low,close,volume"),
+        Path, typer.Option("--input", help="CSV with ts,open,high,low,close,volume")
     ] = Path("data/klines.csv"),
     save: Annotated[bool, typer.Option("--save/--no-save", help="Persist summary to DB")] = True,
 ) -> None:
@@ -669,6 +770,22 @@ def list_paper_fills(limit: Annotated[int, typer.Option(help="Rows to show")] = 
     settings = _settings()
     repository = _repo(settings)
     _print_json(repository.list_recent_paper_fills(limit=limit))
+
+
+@app.command("list-services")
+def list_services(limit: Annotated[int, typer.Option(help="Rows to show")] = 50) -> None:
+    """Show service heartbeat rows for compose deployments."""
+    settings = _settings()
+    repository = _repo(settings)
+    _print_json(repository.list_service_heartbeats(limit=limit))
+
+
+@app.command("list-locks")
+def list_locks(limit: Annotated[int, typer.Option(help="Rows to show")] = 50) -> None:
+    """Show active/recent DB strategy locks."""
+    settings = _settings()
+    repository = _repo(settings)
+    _print_json(repository.list_strategy_locks(limit=limit))
 
 
 @app.command("list-positions")

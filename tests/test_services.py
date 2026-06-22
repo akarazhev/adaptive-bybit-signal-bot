@@ -127,9 +127,17 @@ def test_run_symbol_once_persists_cycle_result(tmp_path: Path) -> None:
 
 
 def test_run_forever_processes_symbols_and_logs_failures(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path}/bot.db",
+        symbols=["BTCUSDT", "ETHUSDT"],
+        service_heartbeat_seconds=0,
+    )
+    repository = BotRepository(create_database_engine(settings.database_url))
+    repository.create_schema()
 
     async def fake_run_symbol_once(**kwargs: Any) -> None:
         symbol = str(kwargs["symbol"])
@@ -146,8 +154,8 @@ def test_run_forever_processes_symbols_and_logs_failures(
     with pytest.raises(StopAsyncIteration):
         run(
             market_loop.run_forever(
-                settings=Settings(symbols=["BTCUSDT", "ETHUSDT"]),
-                repository=object(),  # type: ignore[arg-type]
+                settings=settings,
+                repository=repository,
                 client=object(),  # type: ignore[arg-type]
             )
         )

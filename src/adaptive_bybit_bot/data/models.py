@@ -102,11 +102,43 @@ class FearGreedIndexRecord(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     time_until_update_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=now_utc,
-        index=True,
+        DateTime(timezone=True), default=now_utc, index=True
     )
     raw_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class ServiceHeartbeatRecord(Base):
+    __tablename__ = "service_heartbeats"
+    __table_args__ = (UniqueConstraint("service_name", "instance_id", name="uq_service_instance"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    service_name: Mapped[str] = mapped_column(String(96), index=True)
+    instance_id: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="running", index=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, index=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, index=True
+    )
+    stale_after_seconds: Mapped[int] = mapped_column(Integer, default=120)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class StrategyLockRecord(Base):
+    __tablename__ = "strategy_locks"
+    __table_args__ = (UniqueConstraint("lock_name", name="uq_strategy_lock_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    lock_name: Mapped[str] = mapped_column(String(128), index=True)
+    owner: Mapped[str] = mapped_column(String(192), index=True)
+    acquired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, index=True
+    )
+    locked_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
 class SignalRecord(Base):

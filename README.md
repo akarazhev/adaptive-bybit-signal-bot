@@ -6,7 +6,7 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
 
 > Engineering scaffold only, not financial advice. Run offline backtests and paper/live-shadow mode first, then tune parameters from your own statistics before using real capital.
 
-## Implemented in v0.4
+## Implemented in v0.5
 
 ### Public market data
 
@@ -83,6 +83,8 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
   - `REPRICE_INTENT`
   - `HOLD`
 - Database ledger:
+  - service heartbeats
+  - strategy locks
   - market features
   - regimes
   - instrument specs
@@ -114,7 +116,10 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
 - CLI commands for data collection, strategy cycles, paper fills, WebSocket diagnostics, backtests, and read-only account sync
 - Small read-only HTTP API
 - Podman-compatible `Containerfile`
-- `compose.yaml` with polling bot, WebSocket shadow bot, and API services
+- `compose.yaml` for PostgreSQL-first multi-service Podman Compose deployments
+- Dedicated services for API, WebSocket shadow strategy, instrument sync, Fear & Greed sync, and paper fill simulation
+- Soft DB strategy locks to avoid competing signal writers
+- Service heartbeats exposed through CLI/API
 - Unit tests
 
 ## Safety model
@@ -153,7 +158,7 @@ StrategyEngine + SentimentPolicy
           ↓
 BotRepository
           ↓
-SQLite/PostgreSQL + logs + API/CLI
+SQLite/PostgreSQL + service heartbeats + strategy locks + logs + API/CLI
 ```
 
 Patterns used:
@@ -222,15 +227,66 @@ curl http://localhost:8080/positions
 curl http://localhost:8080/paper-fills
 curl http://localhost:8080/backtests
 curl http://localhost:8080/sentiment/fng
+curl http://localhost:8080/services
+curl http://localhost:8080/locks
 ```
 
 Or with compose:
 
 ```bash
-podman compose up --build bot
-podman compose up --build ws-shadow
-podman compose up --build api
+podman compose up --build
 ```
+
+
+## Multi-service Podman Compose
+
+The default `compose.yaml` is PostgreSQL-first and starts several cooperating services:
+
+```text
+postgres          shared state store
+migrate           one-shot schema initialization
+api               read-only HTTP API
+fng-sync          periodic Alternative.me Fear & Greed cache refresh
+instrument-sync   periodic Bybit instrument filter refresh
+ws-shadow         public WebSocket strategy writer
+paper-runner      optional local paper-fill simulation
+```
+
+Start the full stack:
+
+```bash
+cp .env.example .env
+# Optional but recommended for compose:
+# FNG_ENABLED=true
+# PAPER_TRADING_ENABLED=true
+podman compose up --build
+```
+
+`compose.yaml` overrides `DATABASE_URL` to:
+
+```env
+DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+STRATEGY_WRITER_SERVICE=ws-shadow
+```
+
+That means the WebSocket shadow service is the only default strategy writer. The REST polling writer is kept out of the default stack to avoid duplicate intents. If you intentionally want polling to be the writer instead, use the override file:
+
+```bash
+podman compose -f compose.yaml -f compose.rest.yaml up --build postgres migrate api bot-rest
+```
+
+Useful diagnostics:
+
+```bash
+podman compose logs -f ws-shadow
+podman compose logs -f paper-runner
+podman compose exec api adaptive-bybit-bot list-services
+podman compose exec api adaptive-bybit-bot list-locks
+curl http://localhost:8080/services
+curl http://localhost:8080/locks
+```
+
+The services also wait for the database in application code, so the stack does not rely exclusively on provider-specific advanced `depends_on` behavior.
 
 ## Useful CLI commands
 
@@ -246,6 +302,11 @@ adaptive-bybit-bot list-signals
 adaptive-bybit-bot list-intents
 adaptive-bybit-bot list-positions
 adaptive-bybit-bot list-paper-fills
+adaptive-bybit-bot fng-loop --once
+adaptive-bybit-bot instrument-loop --symbols BTCUSDT,ETHUSDT --once
+adaptive-bybit-bot paper-loop --symbols BTCUSDT,ETHUSDT --once
+adaptive-bybit-bot list-services
+adaptive-bybit-bot list-locks
 ```
 
 WebSocket diagnostics:
@@ -411,6 +472,14 @@ PAPER_TRADING_ENABLED=false
 PAPER_FILL_MODE=trade_through
 PAPER_MIN_FILL_RATIO=1.0
 PAPER_MAX_TRADE_AGE_SECONDS=300
+PAPER_LOOP_INTERVAL_SECONDS=10
+
+SERVICE_HEARTBEAT_SECONDS=15
+SERVICE_HEARTBEAT_STALE_SECONDS=120
+STRATEGY_LOCK_ENABLED=true
+STRATEGY_LOCK_TTL_SECONDS=60
+STRATEGY_WRITER_SERVICE=any
+INSTRUMENT_REFRESH_SECONDS=43200
 
 ORDER_QUOTE_USDT=50
 SPOT_MAKER_FEE_BPS=10
@@ -455,12 +524,13 @@ python -m adaptive_bybit_bot.cli --help
 
 ## Important limitations
 
-1. The WebSocket shadow loop uses public streams only and still refreshes candles from REST.
-2. Candle-level backtesting is an approximation. It does not model queue position, hidden/RPI liquidity, realistic partial fills, or exact intrabar sequencing.
-3. Paper fills are conservative approximations and do not model all exchange microstructure details.
-4. Fear & Greed is daily/slow sentiment and should not be interpreted as a real-time entry trigger.
-5. Liquidation WebSocket data is not fully wired into the strategy. Funding and open interest are included as derivatives context only.
-6. The strategy is deliberately conservative and rule-based. Treat it as a baseline to measure, not as a finished alpha model.
+1. Compose mode uses soft DB leases, not a distributed consensus system. Keep one intended strategy writer per symbol/service.
+2. The WebSocket shadow loop uses public streams only and still refreshes candles from REST.
+3. Candle-level backtesting is an approximation. It does not model queue position, hidden/RPI liquidity, realistic partial fills, or exact intrabar sequencing.
+4. Paper fills are conservative approximations and do not model all exchange microstructure details.
+5. Fear & Greed is daily/slow sentiment and should not be interpreted as a real-time entry trigger.
+6. Liquidation WebSocket data is not fully wired into the strategy. Funding and open interest are included as derivatives context only.
+7. The strategy is deliberately conservative and rule-based. Treat it as a baseline to measure, not as a finished alpha model.
 
 ## Suggested next steps
 

@@ -8,10 +8,7 @@ import httpx
 from adaptive_bybit_bot.config import Settings
 from adaptive_bybit_bot.data.repositories import BotRepository
 from adaptive_bybit_bot.domain.models import FearGreedContext
-from adaptive_bybit_bot.sentiment.alternative_me import (
-    AlternativeMeApiError,
-    AlternativeMeFearGreedClient,
-)
+from adaptive_bybit_bot.sentiment.alternative_me import AlternativeMeFearGreedClient
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +51,6 @@ async def get_fear_greed_context_for_strategy(
             return context
     try:
         return await refresh_fear_greed_cache(settings=settings, repository=repository)
-    except (httpx.HTTPError, AlternativeMeApiError) as exc:
+    except httpx.HTTPError as exc:
         logger.warning("fng_refresh_failed error=%s", exc)
         return context

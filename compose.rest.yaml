@@ -1,0 +1,15 @@
+services:
+  bot-rest:
+    build:
+      context: .
+      dockerfile: Containerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+      APP_ENV: compose
+      # Use this override only when you intentionally want polling to be the writer.
+      STRATEGY_WRITER_SERVICE: bot-rest
+    depends_on:
+      - postgres
+    command: ["run", "--symbols", "${SYMBOLS:-BTCUSDT,ETHUSDT}", "--service-name", "bot-rest"]
+    restart: unless-stopped

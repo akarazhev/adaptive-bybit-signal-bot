@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from adaptive_bybit_bot.backtesting import BacktestConfig, CandleBacktestRunner
 from adaptive_bybit_bot.backtesting.csv_io import read_candles_csv, write_candles_csv
@@ -52,13 +51,11 @@ def test_candle_backtest_runner_produces_metrics() -> None:
 
     assert result.candles == 300
     assert isinstance(result.final_quote_equity, float)
-    assert result.decision_count > 0
-    serialized_decision_count = result.as_dict()["decision_count"]
-    assert isinstance(serialized_decision_count, int)
-    assert serialized_decision_count > 0
+    assert result.decision_count if hasattr(result, "decision_count") else len(result.decisions) > 0
+    assert result.as_dict()["decision_count"] > 0
 
 
-def test_candle_csv_round_trip(tmp_path: Path) -> None:
+def test_candle_csv_round_trip(tmp_path) -> None:
     path = tmp_path / "candles.csv"
     candles = make_candles(5)
     write_candles_csv(path, candles)
@@ -67,7 +64,7 @@ def test_candle_csv_round_trip(tmp_path: Path) -> None:
     assert loaded[0].close == candles[0].close
 
 
-def test_repository_can_persist_backtest_result(tmp_path: Path) -> None:
+def test_repository_can_persist_backtest_result(tmp_path) -> None:
     from adaptive_bybit_bot.data.db import create_database_engine
     from adaptive_bybit_bot.data.repositories import BotRepository
 
@@ -100,6 +97,4 @@ def test_repository_can_persist_backtest_result(tmp_path: Path) -> None:
     assert run_id
     rows = repo.list_backtests(limit=1)
     assert rows[0]["symbol"] == "BTCUSDT"
-    summary = rows[0]["summary"]
-    assert isinstance(summary, dict)
-    assert summary["decision_count"] > 0
+    assert rows[0]["summary"]["decision_count"] > 0

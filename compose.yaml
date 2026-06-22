@@ -1,32 +1,103 @@
 services:
-  bot:
-    build:
-      context: .
-      dockerfile: Containerfile
-    env_file: .env
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bybit_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bot}
     volumes:
-      - adaptive-bybit-data:/data
-    command: ["run", "--symbols", "BTCUSDT,ETHUSDT"]
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d bybit_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  ws-shadow:
+  migrate:
     build:
       context: .
       dockerfile: Containerfile
     env_file: .env
-    volumes:
-      - adaptive-bybit-data:/data
-    command: ["run-ws", "--symbols", "BTCUSDT,ETHUSDT"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+      APP_ENV: compose
+      STRATEGY_WRITER_SERVICE: ws-shadow
+    depends_on:
+      - postgres
+    command: ["init-db"]
+    restart: "no"
 
   api:
     build:
       context: .
       dockerfile: Containerfile
     env_file: .env
-    volumes:
-      - adaptive-bybit-data:/data
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+      APP_ENV: compose
+      STRATEGY_WRITER_SERVICE: ws-shadow
+    depends_on:
+      - postgres
     command: ["api", "--host", "0.0.0.0", "--port", "8080"]
     ports:
       - "8080:8080"
+    restart: unless-stopped
+
+  fng-sync:
+    build:
+      context: .
+      dockerfile: Containerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+      APP_ENV: compose
+      STRATEGY_WRITER_SERVICE: ws-shadow
+    depends_on:
+      - postgres
+    command: ["fng-loop"]
+    restart: unless-stopped
+
+  instrument-sync:
+    build:
+      context: .
+      dockerfile: Containerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+      APP_ENV: compose
+      STRATEGY_WRITER_SERVICE: ws-shadow
+    depends_on:
+      - postgres
+    command: ["instrument-loop", "--symbols", "${SYMBOLS:-BTCUSDT,ETHUSDT}"]
+    restart: unless-stopped
+
+  ws-shadow:
+    build:
+      context: .
+      dockerfile: Containerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+      APP_ENV: compose
+      STRATEGY_WRITER_SERVICE: ws-shadow
+    depends_on:
+      - postgres
+    command: ["run-ws", "--symbols", "${SYMBOLS:-BTCUSDT,ETHUSDT}", "--service-name", "ws-shadow"]
+    restart: unless-stopped
+
+  paper-runner:
+    build:
+      context: .
+      dockerfile: Containerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@postgres:5432/${POSTGRES_DB:-bybit_bot}
+      APP_ENV: compose
+      STRATEGY_WRITER_SERVICE: ws-shadow
+    depends_on:
+      - postgres
+    command: ["paper-loop", "--symbols", "${SYMBOLS:-BTCUSDT,ETHUSDT}", "--service-name", "paper-runner"]
+    restart: unless-stopped
 
 volumes:
-  adaptive-bybit-data:
+  postgres-data:

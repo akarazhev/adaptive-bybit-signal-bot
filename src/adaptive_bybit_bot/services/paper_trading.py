@@ -10,23 +10,12 @@ from adaptive_bybit_bot.domain.models import MarketSnapshot, Trade
 
 
 class ActiveIntentLike(Protocol):
-    @property
-    def id(self) -> str: ...
-
-    @property
-    def symbol(self) -> str: ...
-
-    @property
-    def side(self) -> str: ...
-
-    @property
-    def limit_price(self) -> float: ...
-
-    @property
-    def qty(self) -> float: ...
-
-    @property
-    def created_at(self) -> datetime: ...
+    id: str
+    symbol: str
+    side: str
+    limit_price: float
+    qty: float
+    created_at: datetime
 
 
 @dataclass(frozen=True)

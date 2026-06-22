@@ -83,7 +83,9 @@ def test_repository_reprices_cancels_expires_and_lists_intents(tmp_path: Path) -
         )
     )
     assert new_id is not None
-    assert repository.active_intent("BTCUSDT", Side.BUY).id == new_id  # type: ignore[union-attr]
+    active = repository.active_intent("BTCUSDT", Side.BUY)
+    assert active is not None
+    assert active.id == new_id
 
     cancelled_id = repository.apply_signal(
         decision(

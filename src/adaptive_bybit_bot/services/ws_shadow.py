@@ -27,6 +27,12 @@ from adaptive_bybit_bot.services.factory import (
 )
 from adaptive_bybit_bot.services.market_loop import _load_instrument_or_cached_fallback
 from adaptive_bybit_bot.services.paper_trading import PaperFillResult, PaperFillSimulator
+from adaptive_bybit_bot.services.runtime import (
+    HeartbeatEmitter,
+    ServiceIdentity,
+    service_can_write_strategy,
+    try_signal_writer_lock,
+)
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment, RegimeClassifier
 from adaptive_bybit_bot.strategy.strategy import StrategyEngine
 
@@ -95,6 +101,7 @@ async def run_ws_shadow_forever(
     rest_client: BybitRestClient,
     symbols: list[str] | None = None,
     seconds: int = 0,
+    service_name: str = "ws-shadow",
 ) -> None:
     """Run a live public-WS shadow loop that writes local order intents."""
     symbols = [symbol.upper() for symbol in (symbols or settings.symbols)]
@@ -118,13 +125,22 @@ async def run_ws_shadow_forever(
         symbol: datetime.min.replace(tzinfo=UTC) for symbol in symbols
     }
     started_at = datetime.now(UTC)
+    identity = ServiceIdentity.from_settings(settings, service_name)
+    heartbeat = HeartbeatEmitter(repository, settings, identity)
+    can_write = service_can_write_strategy(settings, service_name)
 
     async for payload in ws_client.stream(topics):
         cache.handle_message(payload)
         now = datetime.now(UTC)
+        heartbeat.emit(
+            status="running" if can_write else "standby",
+            details={"symbols": symbols, "strategy_writer": can_write, "source": "public_ws"},
+        )
         if seconds > 0 and (now - started_at).total_seconds() >= seconds:
             logger.info("ws_shadow_stopped_after_seconds seconds=%s", seconds)
             return
+        if not can_write:
+            continue
         for symbol in symbols:
             if not cache.is_ready(symbol):
                 continue
@@ -132,6 +148,15 @@ async def run_ws_shadow_forever(
                 continue
             last_eval[symbol] = now
             try:
+                if not try_signal_writer_lock(
+                    repository,
+                    settings,
+                    identity,
+                    symbol=symbol,
+                    metadata={"loop": "public_ws_shadow"},
+                ):
+                    logger.info("strategy_lock_skipped service=%s symbol=%s", service_name, symbol)
+                    continue
                 candles = await candle_cache.get(
                     client=rest_client,
                     symbol=symbol,

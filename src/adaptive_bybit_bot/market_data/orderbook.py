@@ -9,7 +9,7 @@ from adaptive_bybit_bot.domain.models import OrderBook, OrderBookLevel
 
 def ms_to_utc(value: object) -> datetime:
     try:
-        return datetime.fromtimestamp(int(str(value)) / 1000, tz=UTC)
+        return datetime.fromtimestamp(_to_int(value) / 1000, tz=UTC)
     except (TypeError, ValueError, OSError):
         return datetime.now(UTC)
 
@@ -18,9 +18,17 @@ def to_float(value: object, default: float = 0.0) -> float:
     try:
         if value in (None, ""):
             return default
-        return float(value)  # type: ignore[arg-type]
+        if isinstance(value, int | float | str):
+            return float(value)
+        return default
     except (TypeError, ValueError):
         return default
+
+
+def _to_int(value: object) -> int:
+    if isinstance(value, int | float | str):
+        return int(value)
+    raise TypeError("value cannot be converted to int")
 
 
 @dataclass
@@ -148,7 +156,7 @@ def _optional_int(value: object) -> int | None:
     try:
         if value in (None, ""):
             return None
-        return int(str(value))
+        return _to_int(value)
     except (TypeError, ValueError):
         return None
 
@@ -160,8 +168,7 @@ class LocalOrderBookStore:
         if not symbols:
             raise ValueError("at least one symbol is required")
         self.books = {
-            symbol.upper(): LocalOrderBook(symbol=symbol.upper(), depth=depth)
-            for symbol in symbols
+            symbol.upper(): LocalOrderBook(symbol=symbol.upper(), depth=depth) for symbol in symbols
         }
 
     def apply_message(self, payload: dict[str, Any]) -> OrderBook | None:

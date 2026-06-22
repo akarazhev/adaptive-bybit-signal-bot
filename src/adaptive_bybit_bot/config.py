@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Annotated
+from uuid import uuid4
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,18 @@ class Settings(BaseSettings):
     bybit_allow_read_write_key: bool = False
 
     database_url: str = "sqlite:///data/bot.db"
+    db_wait_timeout_seconds: int = 60
+    db_wait_interval_seconds: float = 2.0
+
+    app_env: str = "local"
+    service_instance_id: str = Field(default_factory=lambda: str(uuid4()))
+    service_heartbeat_seconds: int = 15
+    service_heartbeat_stale_seconds: int = 120
+    strategy_lock_enabled: bool = True
+    strategy_lock_ttl_seconds: int = 60
+    # "any" preserves standalone CLI behaviour. In compose, set this to
+    # "ws-shadow" to make only that service write strategy signals/intents.
+    strategy_writer_service: str = "any"
 
     symbols: list[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
     poll_interval_seconds: int = 10
@@ -71,10 +84,13 @@ class Settings(BaseSettings):
     fng_greed_sell_target_multiplier: float = 0.92
     fng_extreme_greed_sell_target_multiplier: float = 0.85
 
+    instrument_refresh_seconds: int = 43_200
+
     paper_trading_enabled: bool = False
     paper_fill_mode: Annotated[str, Field(pattern="^(trade_through|touch)$")] = "trade_through"
     paper_min_fill_ratio: float = 1.0
     paper_max_trade_age_seconds: int = 300
+    paper_loop_interval_seconds: int = 10
 
     backtest_starting_quote: float = 10_000.0
     backtest_warmup_candles: int = 240

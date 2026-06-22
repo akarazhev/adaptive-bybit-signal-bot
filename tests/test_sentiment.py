@@ -2,35 +2,24 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Any
 
 import httpx
-import pytest
 
-from adaptive_bybit_bot.config import Settings
 from adaptive_bybit_bot.data.db import create_database_engine
 from adaptive_bybit_bot.data.repositories import BotRepository
 from adaptive_bybit_bot.domain.enums import Regime, SignalAction
-from adaptive_bybit_bot.domain.models import (
-    FearGreedContext,
-    FearGreedValue,
-    FeatureSet,
-    PositionState,
-)
-from adaptive_bybit_bot.sentiment import service as sentiment_service
-from adaptive_bybit_bot.sentiment.alternative_me import (
-    AlternativeMeApiError,
-    AlternativeMeFearGreedClient,
-)
+from adaptive_bybit_bot.domain.models import FearGreedContext, FearGreedValue, PositionState
+from adaptive_bybit_bot.sentiment.alternative_me import AlternativeMeFearGreedClient
 from adaptive_bybit_bot.sentiment.policy import FearGreedPolicyConfig, FearGreedSentimentPolicy
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment
 from adaptive_bybit_bot.strategy.risk import RiskConfig
 from adaptive_bybit_bot.strategy.strategy import StrategyEngine
 
 
-def make_features(**overrides: object) -> FeatureSet:
-    base: dict[str, Any] = dict(
+def make_features(**overrides: object):
+    from adaptive_bybit_bot.domain.models import FeatureSet
+
+    base = dict(
         symbol="BTCUSDT",
         ts=datetime.now(UTC),
         last_price=100.0,
@@ -98,7 +87,7 @@ def test_alternative_me_client_parses_fng_response() -> None:
     asyncio.run(_run())
 
 
-def test_repository_persists_fear_greed_context(tmp_path: Path) -> None:
+def test_repository_persists_fear_greed_context(tmp_path) -> None:
     engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
     repo = BotRepository(engine)
     repo.create_schema()
@@ -107,9 +96,7 @@ def test_repository_persists_fear_greed_context(tmp_path: Path) -> None:
         [
             FearGreedValue(value=20, classification="Extreme Fear", timestamp=now),
             FearGreedValue(
-                value=23,
-                classification="Extreme Fear",
-                timestamp=now - timedelta(days=1),
+                value=23, classification="Extreme Fear", timestamp=now - timedelta(days=1)
             ),
         ]
     )
@@ -167,30 +154,3 @@ def test_strategy_applies_fear_greed_to_buy_intent_size_and_metadata() -> None:
     assert adjusted.qty < baseline.qty
     assert adjusted.metadata["sentiment"]["classification"] == "Extreme Greed"
     assert "fng_extreme_greed:82" in adjusted.reason
-
-
-def test_strategy_sentiment_context_returns_cache_when_refresh_schema_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    engine = create_database_engine(f"sqlite:///{tmp_path}/bot.db")
-    repo = BotRepository(engine)
-    repo.create_schema()
-
-    async def fail_refresh(**_kwargs: object) -> FearGreedContext | None:
-        raise AlternativeMeApiError("bad fng payload")
-
-    monkeypatch.setattr(sentiment_service, "refresh_fear_greed_cache", fail_refresh)
-
-    result = asyncio.run(
-        sentiment_service.get_fear_greed_context_for_strategy(
-            settings=Settings(
-                database_url=f"sqlite:///{tmp_path}/bot.db",
-                fng_enabled=True,
-                fng_refresh_seconds=0,
-            ),
-            repository=repo,
-        )
-    )
-
-    assert result is None

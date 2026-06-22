@@ -19,17 +19,10 @@ from adaptive_bybit_bot.strategy.risk import RiskConfig
 
 
 class ActiveIntentLike(Protocol):
-    @property
-    def id(self) -> str: ...
-
-    @property
-    def side(self) -> str: ...
-
-    @property
-    def limit_price(self) -> float: ...
-
-    @property
-    def qty(self) -> float: ...
+    id: str
+    side: str
+    limit_price: float
+    qty: float
 
 
 class StrategyEngine:
@@ -452,9 +445,8 @@ class StrategyEngine:
             reasons = ["reduce_only_exit_below_instrument_minimum", *filter_warnings, *reasons]
 
         expected_net_bps = (
-            (price / position.avg_entry - 1) * 10_000
-            - self.risk.maker_roundtrip_break_even_bps
-        )
+            price / position.avg_entry - 1
+        ) * 10_000 - self.risk.maker_roundtrip_break_even_bps
         confidence = clamp(
             (0.55 + max(expected_net_bps, 0) / 120) * sentiment_modifiers.confidence_multiplier,
             0.45,
@@ -585,9 +577,7 @@ class StrategyEngine:
 
     @staticmethod
     def _position_age_seconds(
-        position: PositionState,
-        *,
-        now: datetime | None = None,
+        position: PositionState, *, now: datetime | None = None
     ) -> int | None:
         if position.opened_at is None:
             return None

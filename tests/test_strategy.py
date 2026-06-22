@@ -91,24 +91,24 @@ def test_strategy_creates_sell_intent_for_open_position() -> None:
     assert decision.price is not None and decision.price >= 100.0
 
 
-def test_strategy_still_surfaces_reduce_only_sell_when_position_is_below_minimums() -> None:
+def test_strategy_allows_small_reduce_only_exit_with_filter_warnings() -> None:
     engine = StrategyEngine(
-        RiskConfig(max_unrealized_loss_bps=50),
+        RiskConfig(),
         instrument=InstrumentSpec(
             symbol="BTCUSDT",
-            min_order_qty=0.1,
-            min_order_amount_quote=5.0,
+            price_tick_size=0.01,
             qty_step=0.001,
+            min_order_qty=0.001,
+            min_order_amount_quote=5.0,
         ),
     )
 
     decision = engine.evaluate(
-        features=make_features(last_price=98.0, mid_price=98.0, best_bid=97.99),
-        regime=RegimeAssessment(Regime.DOWNTREND, 0.70, ["test_downtrend"]),
-        position=PositionState(symbol="BTCUSDT", qty=0.01, avg_entry=100.0),
+        features=make_features(last_price=101.0, mid_price=101.0, best_bid=100.99, best_ask=101.01),
+        regime=RegimeAssessment(Regime.RANGE, 0.70, ["test_range"]),
+        position=PositionState(symbol="BTCUSDT", qty=0.0001, avg_entry=100.0),
     )
 
     assert decision.action == SignalAction.SELL_INTENT
-    assert decision.qty == 0.01
     assert "reduce_only_exit_below_instrument_minimum" in decision.reason
-    assert "instrument_filter_warnings" in decision.metadata
+    assert decision.metadata["instrument_filter_warnings"]

@@ -246,10 +246,7 @@ class CandleBacktestRunner:
         instrument: InstrumentSpec,
         config: BacktestConfig | None = None,
         sentiment_policy: FearGreedSentimentPolicy | None = None,
-        sentiment_provider: Callable[
-            [datetime],
-            FearGreedContext | FearGreedValue | None,
-        ]
+        sentiment_provider: Callable[[datetime], FearGreedContext | FearGreedValue | None]
         | None = None,
     ) -> None:
         self.risk = risk
@@ -574,9 +571,7 @@ def _intent_from_decision(decision: SignalDecision) -> BacktestIntent:
     if decision.side is None or decision.price is None or decision.qty is None:
         raise ValueError("decision does not contain a complete limit intent")
     expires_at = (
-        decision.ts + timedelta(seconds=decision.ttl_seconds)
-        if decision.ttl_seconds
-        else None
+        decision.ts + timedelta(seconds=decision.ttl_seconds) if decision.ttl_seconds else None
     )
     return BacktestIntent(
         id=decision.replaces_intent_id or str(uuid4()),

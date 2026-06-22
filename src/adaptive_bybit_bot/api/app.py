@@ -5,19 +5,23 @@ from typing import Any
 from fastapi import FastAPI
 
 from adaptive_bybit_bot.config import Settings, get_settings
-from adaptive_bybit_bot.data.db import create_database_engine, create_schema
+from adaptive_bybit_bot.data.db import wait_for_database
 from adaptive_bybit_bot.data.repositories import BotRepository
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    engine = create_database_engine(settings.database_url)
-    create_schema(engine)
+    engine = wait_for_database(
+        settings.database_url,
+        timeout_seconds=settings.db_wait_timeout_seconds,
+        interval_seconds=settings.db_wait_interval_seconds,
+        create=True,
+    )
     repository = BotRepository(engine)
 
     app = FastAPI(
         title="Adaptive Bybit Signal Bot",
-        version="0.4.0",
+        version="0.5.0",
         description="Read-only/order-intent API. No trading endpoint is implemented.",
     )
 
@@ -45,6 +49,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def instruments(limit: int = 100) -> list[dict[str, Any]]:
         return repository.list_instrument_specs(limit=limit)
 
+    @app.get("/services")
+    def services(limit: int = 50) -> list[dict[str, Any]]:
+        return repository.list_service_heartbeats(limit=limit)
+
+    @app.get("/locks")
+    def locks(limit: int = 50) -> list[dict[str, Any]]:
+        return repository.list_strategy_locks(limit=limit)
 
     @app.get("/sentiment/fng")
     def sentiment_fng(limit: int = 30) -> dict[str, Any]:

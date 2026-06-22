@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Engine, Select, desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from adaptive_bybit_bot.data.db import create_schema, session_scope
@@ -20,7 +21,9 @@ from adaptive_bybit_bot.data.models import (
     OrderIntentRecord,
     PaperFillRecord,
     PositionRecord,
+    ServiceHeartbeatRecord,
     SignalRecord,
+    StrategyLockRecord,
 )
 from adaptive_bybit_bot.domain.enums import OrderIntentStatus, PositionStatus, Side, SignalAction
 from adaptive_bybit_bot.domain.models import (
@@ -55,6 +58,12 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 class BotRepository:
     """Repository layer for features, signals, order intents, instruments and positions."""
 
@@ -63,6 +72,200 @@ class BotRepository:
 
     def create_schema(self) -> None:
         create_schema(self.engine)
+
+    def upsert_service_heartbeat(
+        self,
+        *,
+        service_name: str,
+        instance_id: str,
+        status: str = "running",
+        details: dict[str, Any] | None = None,
+        stale_after_seconds: int = 120,
+        now: datetime | None = None,
+    ) -> str:
+        """Record that a long-running service instance is alive."""
+        observed_at = _aware(now or _now())
+        details = details or {}
+        with session_scope(self.engine) as session:
+            row = (
+                session.execute(
+                    select(ServiceHeartbeatRecord)
+                    .where(
+                        ServiceHeartbeatRecord.service_name == service_name,
+                        ServiceHeartbeatRecord.instance_id == instance_id,
+                    )
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            if row is None:
+                row = ServiceHeartbeatRecord(
+                    service_name=service_name,
+                    instance_id=instance_id,
+                    status=status,
+                    started_at=observed_at,
+                    last_seen_at=observed_at,
+                    stale_after_seconds=stale_after_seconds,
+                    details_json=_json_safe(details),
+                )
+                session.add(row)
+                session.flush()
+                return row.id
+            row.status = status
+            row.last_seen_at = observed_at
+            row.stale_after_seconds = stale_after_seconds
+            row.details_json = _json_safe(details)
+            return row.id
+
+    # Backward-compatible alias used by some service helpers.
+    def save_service_heartbeat(
+        self,
+        *,
+        service_name: str,
+        instance_id: str,
+        status: str = "running",
+        metadata: dict[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> str:
+        return self.upsert_service_heartbeat(
+            service_name=service_name,
+            instance_id=instance_id,
+            status=status,
+            details=metadata,
+            now=now,
+        )
+
+    def list_service_heartbeats(self, limit: int = 50) -> list[dict[str, Any]]:
+        now = _now()
+        with session_scope(self.engine) as session:
+            rows = (
+                session.execute(
+                    select(ServiceHeartbeatRecord)
+                    .order_by(desc(ServiceHeartbeatRecord.last_seen_at))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            return [_service_heartbeat_record_to_dict(row, now=now) for row in rows]
+
+    def acquire_strategy_lock(
+        self,
+        *,
+        lock_name: str,
+        owner: str,
+        ttl_seconds: int,
+        metadata: dict[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Acquire or renew a DB-backed lease for one strategy writer.
+
+        The lease expires automatically. If a container dies, another service can
+        acquire the same lock after ``locked_until``.
+        """
+        observed_at = _aware(now or _now())
+        locked_until = observed_at + timedelta(seconds=max(ttl_seconds, 1))
+        metadata = metadata or {}
+        for attempt in range(2):
+            try:
+                with session_scope(self.engine) as session:
+                    row = (
+                        session.execute(
+                            select(StrategyLockRecord)
+                            .where(StrategyLockRecord.lock_name == lock_name)
+                            .limit(1)
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if row is None:
+                        row = StrategyLockRecord(
+                            lock_name=lock_name,
+                            owner=owner,
+                            acquired_at=observed_at,
+                            locked_until=locked_until,
+                            released_at=None,
+                            is_active=1,
+                            metadata_json=_json_safe(metadata),
+                        )
+                        session.add(row)
+                        session.flush()
+                        return True
+                    can_take = (
+                        row.owner == owner
+                        or row.released_at is not None
+                        or not row.is_active
+                        or _aware(row.locked_until) <= observed_at
+                    )
+                    if not can_take:
+                        return False
+                    if row.owner != owner:
+                        row.acquired_at = observed_at
+                    row.owner = owner
+                    row.locked_until = locked_until
+                    row.released_at = None
+                    row.is_active = 1
+                    row.metadata_json = _json_safe(metadata)
+                    return True
+            except IntegrityError:
+                if attempt == 0:
+                    continue
+                return False
+        return False
+
+    def try_acquire_strategy_lock(
+        self,
+        *,
+        lock_key: str,
+        owner: str,
+        service_name: str,
+        instance_id: str,
+        ttl_seconds: int,
+        metadata: dict[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        return self.acquire_strategy_lock(
+            lock_name=lock_key,
+            owner=f"{service_name}:{instance_id}:{owner}",
+            ttl_seconds=ttl_seconds,
+            metadata={"service_name": service_name, "instance_id": instance_id, **(metadata or {})},
+            now=now,
+        )
+
+    def release_strategy_lock(self, *, lock_name: str, owner: str | None = None) -> bool:
+        observed_at = _now()
+        with session_scope(self.engine) as session:
+            row = (
+                session.execute(
+                    select(StrategyLockRecord)
+                    .where(StrategyLockRecord.lock_name == lock_name)
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            if row is None:
+                return False
+            if owner is not None and row.owner != owner:
+                return False
+            row.released_at = observed_at
+            row.is_active = 0
+            return True
+
+    def list_strategy_locks(self, limit: int = 50) -> list[dict[str, Any]]:
+        now = _now()
+        with session_scope(self.engine) as session:
+            rows = (
+                session.execute(
+                    select(StrategyLockRecord)
+                    .order_by(desc(StrategyLockRecord.locked_until))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            return [_strategy_lock_record_to_dict(row, now=now) for row in rows]
 
     def save_instrument_spec(self, spec: InstrumentSpec) -> str:
         with session_scope(self.engine) as session:
@@ -93,24 +296,34 @@ class BotRepository:
         category: str = "spot",
     ) -> InstrumentSpec | None:
         with session_scope(self.engine) as session:
-            record = session.execute(
-                select(InstrumentSpecRecord)
-                .where(
-                    InstrumentSpecRecord.symbol == symbol.upper(),
-                    InstrumentSpecRecord.category == category,
+            record = (
+                session.execute(
+                    select(InstrumentSpecRecord)
+                    .where(
+                        InstrumentSpecRecord.symbol == symbol.upper(),
+                        InstrumentSpecRecord.category == category,
+                    )
+                    .order_by(desc(InstrumentSpecRecord.ts))
+                    .limit(1)
                 )
-                .order_by(desc(InstrumentSpecRecord.ts))
-                .limit(1)
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if record is None:
                 return None
             return _instrument_spec_from_record(record)
 
     def list_recent_instrument_specs(self, limit: int = 20) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(InstrumentSpecRecord).order_by(desc(InstrumentSpecRecord.ts)).limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    select(InstrumentSpecRecord)
+                    .order_by(desc(InstrumentSpecRecord.ts))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             return [_instrument_spec_record_to_dict(row) for row in rows]
 
     def list_instrument_specs(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -119,14 +332,18 @@ class BotRepository:
     def save_fear_greed_value(self, value: FearGreedValue) -> str:
         """Upsert a Fear & Greed observation by source/timestamp."""
         with session_scope(self.engine) as session:
-            existing = session.execute(
-                select(FearGreedIndexRecord)
-                .where(
-                    FearGreedIndexRecord.source == value.source,
-                    FearGreedIndexRecord.timestamp == value.timestamp,
+            existing = (
+                session.execute(
+                    select(FearGreedIndexRecord)
+                    .where(
+                        FearGreedIndexRecord.source == value.source,
+                        FearGreedIndexRecord.timestamp == value.timestamp,
+                    )
+                    .limit(1)
                 )
-                .limit(1)
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if existing is not None:
                 existing.value = value.value
                 existing.classification = value.classification
@@ -155,17 +372,19 @@ class BotRepository:
         return count
 
     def get_latest_fear_greed_value(
-        self,
-        *,
-        source: str = "alternative.me",
+        self, *, source: str = "alternative.me"
     ) -> FearGreedValue | None:
         with session_scope(self.engine) as session:
-            row = session.execute(
-                select(FearGreedIndexRecord)
-                .where(FearGreedIndexRecord.source == source)
-                .order_by(desc(FearGreedIndexRecord.timestamp))
-                .limit(1)
-            ).scalars().first()
+            row = (
+                session.execute(
+                    select(FearGreedIndexRecord)
+                    .where(FearGreedIndexRecord.source == source)
+                    .order_by(desc(FearGreedIndexRecord.timestamp))
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
             return _fear_greed_from_record(row) if row else None
 
     def get_fear_greed_context(
@@ -186,15 +405,19 @@ class BotRepository:
     ) -> FearGreedContext | None:
         """Return the latest FNG context known at or before a timestamp."""
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(FearGreedIndexRecord)
-                .where(
-                    FearGreedIndexRecord.source == source,
-                    FearGreedIndexRecord.timestamp <= ts,
+            rows = (
+                session.execute(
+                    select(FearGreedIndexRecord)
+                    .where(
+                        FearGreedIndexRecord.source == source,
+                        FearGreedIndexRecord.timestamp <= ts,
+                    )
+                    .order_by(desc(FearGreedIndexRecord.timestamp))
+                    .limit(max(history_limit, 1))
                 )
-                .order_by(desc(FearGreedIndexRecord.timestamp))
-                .limit(max(history_limit, 1))
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             return FearGreedContext.from_values([_fear_greed_from_record(row) for row in rows])
 
     def get_fear_greed_values(
@@ -204,21 +427,29 @@ class BotRepository:
         limit: int = 30,
     ) -> list[FearGreedValue]:
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(FearGreedIndexRecord)
-                .where(FearGreedIndexRecord.source == source)
-                .order_by(desc(FearGreedIndexRecord.timestamp))
-                .limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    select(FearGreedIndexRecord)
+                    .where(FearGreedIndexRecord.source == source)
+                    .order_by(desc(FearGreedIndexRecord.timestamp))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             return [_fear_greed_from_record(row) for row in rows]
 
     def list_fear_greed_values(self, limit: int = 30) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(FearGreedIndexRecord)
-                .order_by(desc(FearGreedIndexRecord.timestamp))
-                .limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    select(FearGreedIndexRecord)
+                    .order_by(desc(FearGreedIndexRecord.timestamp))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             return [_fear_greed_record_to_dict(row) for row in rows]
 
     def save_backtest_result(self, result: Any) -> str:
@@ -229,7 +460,9 @@ class BotRepository:
         """
         summary = result.summary_dict() if hasattr(result, "summary_dict") else result.as_dict()
         config = getattr(result, "config", None)
-        config_json = config.as_dict() if config is not None and hasattr(config, "as_dict") else {}
+        config_json: dict[str, Any] = {}
+        if config is not None and hasattr(config, "as_dict"):
+            config_json = config.as_dict()
         with session_scope(self.engine) as session:
             run = BacktestRunRecord(
                 symbol=result.symbol,
@@ -269,9 +502,13 @@ class BotRepository:
 
     def list_backtests(self, limit: int = 20) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(BacktestRunRecord).order_by(desc(BacktestRunRecord.ts)).limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    select(BacktestRunRecord).order_by(desc(BacktestRunRecord.ts)).limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             return [
                 {
                     "id": row.id,
@@ -475,9 +712,9 @@ class BotRepository:
 
     def active_intent(self, symbol: str, side: Side | None = None) -> OrderIntentRecord | None:
         with session_scope(self.engine) as session:
-            record = session.execute(
-                self._active_intent_query(symbol, side).limit(1)
-            ).scalars().first()
+            record = (
+                session.execute(self._active_intent_query(symbol, side).limit(1)).scalars().first()
+            )
             if record is not None:
                 session.expunge(record)
             return record
@@ -586,15 +823,19 @@ class BotRepository:
 
     def get_position_state(self, symbol: str) -> PositionState:
         with session_scope(self.engine) as session:
-            record = session.execute(
-                select(PositionRecord)
-                .where(
-                    PositionRecord.symbol == symbol,
-                    PositionRecord.status == PositionStatus.OPEN.value,
+            record = (
+                session.execute(
+                    select(PositionRecord)
+                    .where(
+                        PositionRecord.symbol == symbol,
+                        PositionRecord.status == PositionStatus.OPEN.value,
+                    )
+                    .order_by(desc(PositionRecord.opened_at))
+                    .limit(1)
                 )
-                .order_by(desc(PositionRecord.opened_at))
-                .limit(1)
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if record is None:
                 return PositionState(symbol=symbol)
             return PositionState(
@@ -606,9 +847,13 @@ class BotRepository:
 
     def list_positions(self, limit: int = 20) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(PositionRecord).order_by(desc(PositionRecord.updated_at)).limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    select(PositionRecord).order_by(desc(PositionRecord.updated_at)).limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             return [
                 {
                     "id": row.id,
@@ -626,9 +871,15 @@ class BotRepository:
 
     def list_recent_intents(self, limit: int = 20) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(OrderIntentRecord).order_by(desc(OrderIntentRecord.created_at)).limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    select(OrderIntentRecord)
+                    .order_by(desc(OrderIntentRecord.created_at))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             return [
                 {
                     "id": row.id,
@@ -649,9 +900,11 @@ class BotRepository:
 
     def list_recent_signals(self, limit: int = 20) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(SignalRecord).order_by(desc(SignalRecord.ts)).limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(select(SignalRecord).order_by(desc(SignalRecord.ts)).limit(limit))
+                .scalars()
+                .all()
+            )
             return [
                 {
                     "id": row.id,
@@ -672,9 +925,13 @@ class BotRepository:
 
     def list_paper_fills(self, limit: int = 20) -> list[dict[str, Any]]:
         with session_scope(self.engine) as session:
-            rows = session.execute(
-                select(PaperFillRecord).order_by(desc(PaperFillRecord.ts)).limit(limit)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    select(PaperFillRecord).order_by(desc(PaperFillRecord.ts)).limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             return [
                 {
                     "id": row.id,
@@ -710,9 +967,13 @@ class BotRepository:
                 exec_id = str(row.get("execId") or row.get("exec_id") or "")
                 if not exec_id:
                     continue
-                exists = session.execute(
-                    select(ExecutionRecord).where(ExecutionRecord.exec_id == exec_id).limit(1)
-                ).scalars().first()
+                exists = (
+                    session.execute(
+                        select(ExecutionRecord).where(ExecutionRecord.exec_id == exec_id).limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
                 if exists:
                     continue
                 record = ExecutionRecord(
@@ -778,15 +1039,19 @@ class BotRepository:
         qty: float,
         ts: datetime,
     ) -> None:
-        position = session.execute(
-            select(PositionRecord)
-            .where(
-                PositionRecord.symbol == symbol,
-                PositionRecord.status == PositionStatus.OPEN.value,
+        position = (
+            session.execute(
+                select(PositionRecord)
+                .where(
+                    PositionRecord.symbol == symbol,
+                    PositionRecord.status == PositionStatus.OPEN.value,
+                )
+                .order_by(desc(PositionRecord.opened_at))
+                .limit(1)
             )
-            .order_by(desc(PositionRecord.opened_at))
-            .limit(1)
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
 
         if side == Side.BUY:
             if position is None:
@@ -819,6 +1084,45 @@ class BotRepository:
             position.qty = 0.0
             position.status = PositionStatus.CLOSED.value
             position.closed_at = ts
+
+
+def _service_heartbeat_record_to_dict(
+    row: ServiceHeartbeatRecord,
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    last_seen = _aware(row.last_seen_at)
+    age_seconds = max(0.0, (_aware(now) - last_seen).total_seconds())
+    stale_after = row.stale_after_seconds or 0
+    return {
+        "id": row.id,
+        "service_name": row.service_name,
+        "instance_id": row.instance_id,
+        "status": row.status,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
+        "stale_after_seconds": stale_after,
+        "age_seconds": age_seconds,
+        "is_stale": bool(stale_after and age_seconds > stale_after),
+        "details": row.details_json or {},
+    }
+
+
+def _strategy_lock_record_to_dict(row: StrategyLockRecord, *, now: datetime) -> dict[str, Any]:
+    locked_until = _aware(row.locked_until)
+    is_expired = locked_until <= _aware(now)
+    return {
+        "id": row.id,
+        "lock_name": row.lock_name,
+        "owner": row.owner,
+        "acquired_at": row.acquired_at.isoformat() if row.acquired_at else None,
+        "locked_until": row.locked_until.isoformat() if row.locked_until else None,
+        "released_at": row.released_at.isoformat() if row.released_at else None,
+        "is_active": bool(row.is_active),
+        "is_expired": is_expired,
+        "is_effectively_active": bool(row.is_active and row.released_at is None and not is_expired),
+        "metadata": row.metadata_json or {},
+    }
 
 
 def _fear_greed_from_record(record: FearGreedIndexRecord) -> FearGreedValue:

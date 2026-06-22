@@ -19,6 +19,12 @@ from adaptive_bybit_bot.services.factory import (
     risk_config_from_settings,
 )
 from adaptive_bybit_bot.services.paper_trading import PaperFillResult, PaperFillSimulator
+from adaptive_bybit_bot.services.runtime import (
+    HeartbeatEmitter,
+    ServiceIdentity,
+    service_can_write_strategy,
+    try_signal_writer_lock,
+)
 from adaptive_bybit_bot.strategy.regime import RegimeAssessment, RegimeClassifier
 from adaptive_bybit_bot.strategy.strategy import StrategyEngine
 
@@ -151,11 +157,31 @@ async def run_forever(
     repository: BotRepository,
     client: BybitRestClient,
     symbols: list[str] | None = None,
+    service_name: str = "bot-rest",
 ) -> None:
     symbols = symbols or settings.symbols
+    identity = ServiceIdentity.from_settings(settings, service_name)
+    heartbeat = HeartbeatEmitter(repository, settings, identity)
+    can_write = service_can_write_strategy(settings, service_name)
     while True:
+        heartbeat.emit(
+            status="running" if can_write else "standby",
+            details={"symbols": symbols, "strategy_writer": can_write},
+        )
+        if not can_write:
+            await asyncio.sleep(settings.poll_interval_seconds)
+            continue
         for symbol in symbols:
             try:
+                if not try_signal_writer_lock(
+                    repository,
+                    settings,
+                    identity,
+                    symbol=symbol,
+                    metadata={"loop": "rest_polling"},
+                ):
+                    logger.info("strategy_lock_skipped service=%s symbol=%s", service_name, symbol)
+                    continue
                 await run_symbol_once(
                     settings=settings,
                     repository=repository,

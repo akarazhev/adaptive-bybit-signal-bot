@@ -1,10 +1,13 @@
-.PHONY: test init-db run-once run-ws refresh-instruments fetch-fng list-fng paper-fill-once ws-print ws-snapshot backtest-fetch backtest-csv api build run shell
+.PHONY: test init-db wait-db run-once run-ws refresh-instruments instrument-loop fetch-fng fng-loop list-fng paper-fill-once paper-loop ws-print ws-snapshot backtest-fetch backtest-csv api build run shell compose-up compose-down compose-logs
 
 test:
 	PYTHONPATH=src pytest
 
 init-db:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli init-db
+
+wait-db:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli wait-db
 
 run-once:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli run-once --symbol BTCUSDT
@@ -15,14 +18,23 @@ run-ws:
 refresh-instruments:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli refresh-instruments --symbols BTCUSDT,ETHUSDT
 
+instrument-loop:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli instrument-loop --symbols BTCUSDT,ETHUSDT --once
+
 fetch-fng:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli fetch-fng --limit 30
+
+fng-loop:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli fng-loop --once
 
 list-fng:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli list-fng --limit 30
 
 paper-fill-once:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli paper-fill-once --symbol BTCUSDT
+
+paper-loop:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli paper-loop --symbols BTCUSDT,ETHUSDT --once
 
 ws-print:
 	PYTHONPATH=src python -m adaptive_bybit_bot.cli ws-print --symbols BTCUSDT --seconds 30 --orderbook-depth 1
@@ -47,3 +59,12 @@ run:
 
 shell:
 	podman run --rm -it --env-file .env -v adaptive-bybit-data:/data --entrypoint /bin/bash adaptive-bybit-signal-bot
+
+compose-up:
+	./scripts/podman-compose-up.sh
+
+compose-down:
+	./scripts/podman-compose-down.sh
+
+compose-logs:
+	./scripts/podman-compose-logs.sh
