@@ -260,11 +260,7 @@ ws-shadow         public WebSocket strategy writer
 paper-runner      optional local paper-fill simulation
 ```
 
-Compose uses `POSTGRES_IMAGE` with a default of `docker.io/library/postgres:18-alpine`.
-If you already have a `postgres-data` volume created by PostgreSQL 16, migrate it with
-dump/restore or `pg_upgrade` before starting PostgreSQL 18. To keep an existing
-PostgreSQL 16 volume running during migration planning, set
-`POSTGRES_IMAGE=docker.io/library/postgres:16-alpine`.
+Compose uses `docker.io/library/postgres:18-alpine` for the shared PostgreSQL store.
 
 The high-volume recorder is intentionally kept out of the default stack. To enable it, add the overlay:
 
