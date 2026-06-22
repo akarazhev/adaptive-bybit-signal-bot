@@ -35,6 +35,21 @@ Use these as the default daily surface:
 
 Do not add off-stack ECC surfaces to the daily set unless repo evidence changes.
 
+## OpenSpec Workflow
+
+OpenSpec is initialized under `openspec/` and configured for this repository's
+production safety model.
+
+- Use `openspec/config.yaml` as the project-specific planning context for new
+  proposals, specs, designs, and tasks.
+- Use OpenSpec for behavior, persistence, API, runtime, deployment, or safety
+  changes before implementation. Prefer `/opsx:propose` for a complete first
+  pass or the equivalent `openspec` CLI workflow when operating from a shell.
+- Keep source specs under `openspec/specs/` aligned with the repo's production
+  safety and governance contracts.
+- Run `openspec validate --all --strict --no-interactive` before handoff when
+  OpenSpec artifacts change.
+
 ## Non-Negotiable Safety Invariants
 
 - Do not add direct exchange execution methods, including:

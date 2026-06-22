@@ -1,0 +1,81 @@
+schema: spec-driven
+
+context: |
+  Project: adaptive-bybit-signal-bot v0.6.0.
+
+  Purpose:
+  - Python 3.12 read-only/order-intent bot for Bybit Spot BTC/ETH.
+  - The system reads public/read-only market data, computes regimes/signals,
+    writes local order intents, and supports paper/backtest/replay workflows.
+  - The system is not a live exchange executor and must not become one through
+    ordinary feature work.
+
+  Non-negotiable safety boundary:
+  - Do not add direct Bybit order placement, cancellation, amendment, transfer,
+    withdrawal, leverage, margin, or execution APIs.
+  - Forbidden execution method names include place_order, cancel_order,
+    amend_order, create_order, submit_order, withdraw, transfer, and set_leverage.
+  - BybitRestClient must remain public/read-only except for already-present
+    signed read-only validation/account sync flows.
+  - Local order intents, paper fills, backtest fills, and replay fills are the
+    permitted action records.
+  - BYBIT_ALLOW_READ_WRITE_KEY must default to false. Changing that default or
+    documenting read-write keys as normal operation requires explicit security
+    review and user approval.
+
+  Stack:
+  - Python package under src/adaptive_bybit_bot.
+  - Typer CLI entrypoint: adaptive-bybit-bot.
+  - FastAPI read-only API under src/adaptive_bybit_bot/api.
+  - SQLAlchemy persistence with SQLite standalone mode and PostgreSQL compose
+    mode.
+  - Pydantic Settings from .env; never inspect, print, or commit local .env.
+  - Podman deployment via Containerfile, compose.yaml, compose.rest.yaml, and
+    compose.recorder.yaml.
+  - Tests use pytest; quality gates are compileall, ruff, and strict mypy.
+
+  Architecture boundaries:
+  - exchange/ isolates Bybit REST/WS adapters.
+  - features/, strategy/, and sentiment/ stay calculation-oriented.
+  - data/repositories.py owns persistence workflows.
+  - services/ owns runtime orchestration, loops, heartbeats, and locks.
+  - api/ remains read-only presentation.
+  - recording/ and replay are opt-in/high-volume workflows and must not become
+    default-on in compose.
+
+  Production readiness posture:
+  - Favor measurable strategy quality over adding indicators for their own sake.
+  - Preserve SQLite standalone and PostgreSQL compose modes.
+  - Keep public-network access out of ordinary unit tests. Use mocks, fixtures,
+    or explicit integration gates.
+  - Deployment changes must consider health checks, restart behavior, resource
+    usage, logs, rollback, and recorder storage growth.
+  - New persistent schema/data-store behavior needs migration and rollback
+    reasoning even when implemented through SQLAlchemy metadata rather than
+    Alembic.
+
+rules:
+  proposal:
+    - State whether the change touches exchange adapters, signing, account sync, order intents, paper trading, persistence, API, compose, recorder/replay, or secrets.
+    - Include an explicit "Safety boundary" note for any trading-adjacent change, even when the expected answer is "read-only/order-intent only".
+    - Identify user-visible behavior, operational impact, and production rollback considerations.
+    - Keep new API proposals GET/read-only unless the user explicitly requests a write endpoint and security review is part of scope.
+    - Do not propose live Bybit execution as an in-repo capability.
+  specs:
+    - Requirements must use SHALL or MUST and describe observable product, safety, or operational behavior.
+    - Include scenarios for read-only/order-intent safety when behavior touches exchange, credentials, account sync, or order-intent records.
+    - Include scenarios for SQLite standalone and PostgreSQL compose behavior when persistence changes.
+    - Include scenarios for recorder opt-in behavior when recording/replay changes.
+    - Do not encode implementation-only details as product requirements unless they are part of the safety or production contract.
+  design:
+    - Explain how the design preserves the no-exchange-execution invariant.
+    - Document validation at system boundaries, secret handling, failure modes, and rollback for security-sensitive or deployment changes.
+    - For persistence changes, describe schema compatibility, data backfill needs, and rollback behavior.
+    - For runtime/compose changes, document health, restart policy, resource/storage implications, and operator commands.
+    - Prefer existing module boundaries and repository/service abstractions over new cross-cutting shortcuts.
+  tasks:
+    - Include failing tests before behavior changes, then implementation, then refactor/cleanup.
+    - Include PYTHONPATH=src pytest, python -m compileall -q src tests, ruff check ., and mypy src as handoff checks unless explicitly out of scope.
+    - Add podman build -t adaptive-bybit-signal-bot -f Containerfile . and podman compose config when deployment files change.
+    - Add doc/spec updates when architecture, safety guarantees, runbooks, compose topology, or roadmap behavior changes.
+    - Include a security-review task for credentials, account sync, API endpoints, Bybit adapter changes, or any trading-adjacent write behavior.

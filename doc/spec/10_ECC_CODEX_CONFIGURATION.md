@@ -52,6 +52,31 @@ they are not loaded daily because current repo evidence does not justify them.
 - `.codex/config.toml` - project-local Codex defaults, MCP servers, and agent roles.
 - `.codex/agents/*.toml` - read-only explorer/reviewer/docs-researcher roles.
 - `.agents/skills/*` - selected ECC daily skills.
+- `openspec/config.yaml` - project-specific OpenSpec context and artifact rules
+  for production-ready planning.
+- `openspec/specs/*/spec.md` - source specifications for the trading safety
+  boundary and production governance.
+
+## OpenSpec Production Configuration
+
+OpenSpec is configured as the planning layer for production-facing changes. Its
+context encodes the read-only/order-intent Bybit safety invariant, Python/FastAPI
+stack, SQLite/PostgreSQL runtime modes, Podman deployment surface, and required
+verification gates.
+
+The current OpenSpec CLI verification baseline is `1.4.1`. After upgrading the
+OpenSpec CLI, rerun `openspec update --force` from this repository so the
+generated Codex prompts under `CODEX_HOME`/`~/.codex/prompts` are refreshed.
+
+For new behavior, persistence, API, runtime, deployment, or safety changes:
+
+```bash
+openspec validate --all --strict --no-interactive
+```
+
+Use `/opsx:propose` or the equivalent OpenSpec CLI workflow before implementation
+so proposals, specs, designs, and tasks inherit the repository safety and
+production-readiness rules.
 
 ## Verification Expectation
 
