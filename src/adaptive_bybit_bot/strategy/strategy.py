@@ -56,7 +56,9 @@ class StrategyEngine:
         position: PositionState,
         active_buy: ActiveIntentLike | None = None,
         active_sell: ActiveIntentLike | None = None,
+        now: datetime | None = None,
     ) -> SignalDecision:
+        decision_time = now or features.ts
         if position.is_open:
             if active_buy is not None:
                 return SignalDecision(
@@ -71,7 +73,13 @@ class StrategyEngine:
                     reason=["position_open_cancel_extra_buy_intent"],
                     replaces_intent_id=active_buy.id,
                 )
-            return self._evaluate_sell_side(features, regime, position, active_sell)
+            return self._evaluate_sell_side(
+                features,
+                regime,
+                position,
+                active_sell,
+                now=decision_time,
+            )
 
         if active_sell is not None:
             return SignalDecision(
@@ -254,8 +262,10 @@ class StrategyEngine:
         regime: RegimeAssessment,
         position: PositionState,
         active_sell: ActiveIntentLike | None,
+        *,
+        now: datetime,
     ) -> SignalDecision:
-        draft = self._build_sell_intent(features, regime, position)
+        draft = self._build_sell_intent(features, regime, position, now=now)
         if active_sell is None:
             return draft
 
@@ -298,6 +308,8 @@ class StrategyEngine:
         features: FeatureSet,
         regime: RegimeAssessment,
         position: PositionState,
+        *,
+        now: datetime,
     ) -> SignalDecision:
         if not position.is_open:
             return SignalDecision.hold(
@@ -309,7 +321,7 @@ class StrategyEngine:
             )
 
         pnl_bps = position.unrealized_pnl_bps(features.last_price)
-        age_seconds = self._position_age_seconds(position)
+        age_seconds = self._position_age_seconds(position, now=now)
         target_bps = self.risk.target_sell_profit_bps
         reasons = [*regime.reason, f"unrealized_pnl:{pnl_bps:.2f}bps"]
 
@@ -503,10 +515,17 @@ class StrategyEngine:
         }
 
     @staticmethod
-    def _position_age_seconds(position: PositionState) -> int | None:
+    def _position_age_seconds(
+        position: PositionState,
+        *,
+        now: datetime | None = None,
+    ) -> int | None:
         if position.opened_at is None:
             return None
         opened_at = position.opened_at
         if opened_at.tzinfo is None:
             opened_at = opened_at.replace(tzinfo=UTC)
-        return int((datetime.now(UTC) - opened_at).total_seconds())
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        return int((current.astimezone(UTC) - opened_at).total_seconds())

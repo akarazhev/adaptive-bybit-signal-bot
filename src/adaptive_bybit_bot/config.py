@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     orderbook_limit: int = 50
     recent_trades_limit: int = 60
 
+    ws_orderbook_depth: int = 50
+    ws_evaluation_interval_seconds: int = 10
+    ws_candle_refresh_seconds: int = 30
+    ws_trade_lookback_seconds: int = 120
+    ws_max_trades_per_symbol: int = 2000
+
     order_quote_usdt: float = 50.0
     max_position_quote_usdt: float = 250.0
     spot_maker_fee_bps: float = 10.0
@@ -45,6 +51,11 @@ class Settings(BaseSettings):
     paper_fill_mode: Annotated[str, Field(pattern="^(trade_through|touch)$")] = "trade_through"
     paper_min_fill_ratio: float = 1.0
     paper_max_trade_age_seconds: int = 300
+
+    backtest_starting_quote: float = 10_000.0
+    backtest_warmup_candles: int = 240
+    backtest_synthetic_spread_bps: float = 2.0
+    backtest_force_close: bool = True
 
     log_level: Annotated[str, Field(pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")] = "INFO"
 

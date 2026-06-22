@@ -42,6 +42,16 @@ def _ms_to_dt(value: object) -> datetime:
         return datetime.now(UTC)
 
 
+def _dt_to_ms(value: datetime | int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return int(value.timestamp() * 1000)
+
+
 def _result_dict(payload: Mapping[str, Any]) -> dict[str, Any]:
     result = payload.get("result")
     return result if isinstance(result, dict) else {}
@@ -179,10 +189,20 @@ class BybitRestClient:
         category: str = "spot",
         interval: str = "1",
         limit: int = 240,
+        start: datetime | int | None = None,
+        end: datetime | int | None = None,
     ) -> list[Candle]:
+        limit = min(max(limit, 1), 1000)
         payload = await self._get(
             "/v5/market/kline",
-            {"category": category, "symbol": symbol, "interval": interval, "limit": limit},
+            {
+                "category": category,
+                "symbol": symbol,
+                "interval": interval,
+                "limit": limit,
+                "start": _dt_to_ms(start),
+                "end": _dt_to_ms(end),
+            },
         )
         rows = payload.get("result", {}).get("list", [])
         candles = [

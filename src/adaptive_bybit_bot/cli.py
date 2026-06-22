@@ -11,18 +11,27 @@ from rich.console import Console
 from rich.table import Table
 
 from adaptive_bybit_bot.api.app import create_app
+from adaptive_bybit_bot.backtesting import BacktestConfig, BacktestResult, CandleBacktestRunner
+from adaptive_bybit_bot.backtesting.csv_io import read_candles_csv, write_candles_csv
+from adaptive_bybit_bot.backtesting.historical import fetch_historical_klines, parse_datetime
 from adaptive_bybit_bot.config import Settings, get_settings
 from adaptive_bybit_bot.data.db import create_database_engine, create_schema
 from adaptive_bybit_bot.data.repositories import BotRepository
+from adaptive_bybit_bot.domain.models import Candle, InstrumentSpec
 from adaptive_bybit_bot.exchange.bybit_client import BybitRestClient
 from adaptive_bybit_bot.exchange.bybit_ws import BybitPublicWebSocketClient
 from adaptive_bybit_bot.logging_config import configure_logging
 from adaptive_bybit_bot.services.account_sync import sync_account_once, validate_read_only_key
+from adaptive_bybit_bot.services.factory import risk_config_from_settings
 from adaptive_bybit_bot.services.market_loop import (
     refresh_instruments_once,
     run_forever,
     run_paper_fill_once,
     run_symbol_once,
+)
+from adaptive_bybit_bot.services.ws_shadow import (
+    collect_ws_cache_for_seconds,
+    run_ws_shadow_forever,
 )
 
 app = typer.Typer(no_args_is_help=True, help="Adaptive Bybit spot signal/order-intent bot.")
@@ -49,6 +58,35 @@ def _parse_symbols(value: str | None, settings: Settings) -> list[str]:
 
 def _print_json(payload: object) -> None:
     console.print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+
+
+def _backtest_config(settings: Settings, *, symbol: str, interval: str) -> BacktestConfig:
+    del symbol  # reserved for future per-symbol overrides
+    return BacktestConfig(
+        interval=interval,
+        initial_quote=settings.backtest_starting_quote,
+        lookback_candles=settings.backtest_warmup_candles,
+        synthetic_spread_bps=settings.backtest_synthetic_spread_bps,
+        maker_fee_bps=settings.spot_maker_fee_bps,
+        fill_model="touch",
+        force_close=settings.backtest_force_close,
+    )
+
+
+def _run_backtest(
+    *,
+    settings: Settings,
+    symbol: str,
+    interval: str,
+    candles: list[Candle],
+    instrument: InstrumentSpec,
+) -> BacktestResult:
+    runner = CandleBacktestRunner(
+        risk=risk_config_from_settings(settings),
+        instrument=instrument,
+        config=_backtest_config(settings, symbol=symbol, interval=interval),
+    )
+    return runner.run(symbol=symbol.upper(), candles=candles)
 
 
 @app.command("init-db")
@@ -108,6 +146,35 @@ def run(
                 repository=repository,
                 client=client,
                 symbols=selected_symbols,
+            )
+
+    asyncio.run(_run())
+
+
+@app.command("run-ws")
+def run_ws(
+    symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+    seconds: Annotated[int, typer.Option(help="Seconds to run; 0 means forever")] = 0,
+) -> None:
+    """Run public WebSocket shadow loop and persist local order intents."""
+    settings = _settings()
+    repository = _repo(settings)
+    selected_symbols = _parse_symbols(symbols, settings)
+    logging.getLogger(__name__).info("starting_ws_shadow symbols=%s", selected_symbols)
+
+    async def _run() -> None:
+        async with BybitRestClient(
+            base_url=settings.bybit_base_url,
+            api_key=settings.bybit_api_key,
+            api_secret=settings.bybit_api_secret,
+            recv_window=settings.bybit_recv_window,
+        ) as client:
+            await run_ws_shadow_forever(
+                settings=settings,
+                repository=repository,
+                rest_client=client,
+                symbols=selected_symbols,
+                seconds=seconds,
             )
 
     asyncio.run(_run())
@@ -286,6 +353,191 @@ def ws_print(
             console.print(f"Stopped after {seconds} seconds")
 
     asyncio.run(_run())
+
+
+@app.command("ws-snapshot")
+def ws_snapshot(
+    symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+    seconds: Annotated[int, typer.Option(help="Seconds to collect public WS data")] = 10,
+) -> None:
+    """Collect public WS data briefly and print local cache diagnostics."""
+    settings = _settings()
+    selected_symbols = _parse_symbols(symbols, settings)
+
+    async def _run() -> None:
+        cache = await collect_ws_cache_for_seconds(
+            settings=settings,
+            symbols=selected_symbols,
+            seconds=seconds,
+        )
+        _print_json(cache.diagnostics())
+
+    asyncio.run(_run())
+
+
+@app.command("ws-book")
+def ws_book(
+    symbols: Annotated[str | None, typer.Option(help="Comma-separated symbols")] = None,
+    seconds: Annotated[int, typer.Option(help="Seconds to stream; 0 means forever")] = 30,
+    depth: Annotated[int, typer.Option(help="Orderbook depth topic, e.g. 1/50/200/1000")] = 50,
+) -> None:
+    """Maintain a local public WS orderbook and print top-of-book updates."""
+    settings = _settings()
+    selected_symbols = _parse_symbols(symbols, settings)
+
+    async def _consume() -> None:
+        client = BybitPublicWebSocketClient(url=settings.bybit_public_ws_spot_url)
+        async for orderbook in client.stream_orderbooks(symbols=selected_symbols, depth=depth):
+            _print_json(
+                {
+                    "symbol": orderbook.symbol,
+                    "ts": orderbook.ts.isoformat(),
+                    "best_bid": orderbook.best_bid,
+                    "best_ask": orderbook.best_ask,
+                    "mid": orderbook.mid,
+                }
+            )
+
+    async def _run() -> None:
+        if seconds <= 0:
+            await _consume()
+            return
+        try:
+            async with asyncio.timeout(seconds):
+                await _consume()
+        except TimeoutError:
+            console.print(f"Stopped after {seconds} seconds")
+
+    asyncio.run(_run())
+
+
+@app.command("download-klines")
+def download_klines(
+    symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
+    start: Annotated[
+        str,
+        typer.Option(help="UTC start, e.g. 2026-06-01 or ISO timestamp"),
+    ] = "2026-06-01",
+    end: Annotated[
+        str,
+        typer.Option(help="UTC end, e.g. 2026-06-02 or ISO timestamp"),
+    ] = "2026-06-02",
+    interval: Annotated[str, typer.Option(help="Bybit kline interval, e.g. 1,5,15,60,D")] = "1",
+    output: Annotated[Path, typer.Option(help="Output CSV path")] = Path("data/klines.csv"),
+) -> None:
+    """Download historical Bybit spot klines to CSV for offline backtesting."""
+    settings = _settings()
+    start_dt = parse_datetime(start)
+    end_dt = parse_datetime(end)
+
+    async def _run() -> None:
+        async with BybitRestClient(base_url=settings.bybit_base_url) as client:
+            candles = await fetch_historical_klines(
+                client=client,
+                symbol=symbol.upper(),
+                interval=interval,
+                start=start_dt,
+                end=end_dt,
+            )
+            write_candles_csv(output, candles)
+            console.print(f"Saved {len(candles)} candles to {output}")
+
+    asyncio.run(_run())
+
+
+@app.command("backtest-fetch")
+def backtest_fetch(
+    symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
+    start: Annotated[
+        str,
+        typer.Option(help="UTC start, e.g. 2026-06-01 or ISO timestamp"),
+    ] = "2026-06-01",
+    end: Annotated[
+        str,
+        typer.Option(help="UTC end, e.g. 2026-06-02 or ISO timestamp"),
+    ] = "2026-06-02",
+    interval: Annotated[str, typer.Option(help="Bybit kline interval, e.g. 1,5,15,60,D")] = "1",
+    save: Annotated[bool, typer.Option("--save/--no-save", help="Persist summary to DB")] = True,
+) -> None:
+    """Fetch historical klines and run candle-level backtest."""
+    settings = _settings()
+    repository = _repo(settings)
+    start_dt = parse_datetime(start)
+    end_dt = parse_datetime(end)
+
+    async def _run() -> None:
+        async with BybitRestClient(base_url=settings.bybit_base_url) as client:
+            instrument = await client.get_instrument_info(symbol.upper(), category="spot")
+            repository.save_instrument_spec(instrument)
+            candles = await fetch_historical_klines(
+                client=client,
+                symbol=symbol.upper(),
+                interval=interval,
+                start=start_dt,
+                end=end_dt,
+            )
+            result = _run_backtest(
+                settings=settings,
+                symbol=symbol.upper(),
+                interval=interval,
+                candles=candles,
+                instrument=instrument,
+            )
+            payload = result.as_dict()
+            if save:
+                payload["backtest_run_id"] = repository.save_backtest_result(result)
+            _print_json(payload)
+
+    asyncio.run(_run())
+
+
+@app.command("backtest-csv")
+def backtest_csv(
+    symbol: Annotated[str, typer.Option(help="Spot symbol, e.g. BTCUSDT")] = "BTCUSDT",
+    interval: Annotated[str, typer.Option(help="Bybit kline interval used in the CSV")] = "1",
+    input_path: Annotated[
+        Path,
+        typer.Option("--input", help="CSV with ts,open,high,low,close,volume"),
+    ] = Path("data/klines.csv"),
+    save: Annotated[bool, typer.Option("--save/--no-save", help="Persist summary to DB")] = True,
+) -> None:
+    """Run candle-level backtest from a local CSV file."""
+    settings = _settings()
+    repository = _repo(settings)
+    candles = read_candles_csv(input_path)
+    instrument = repository.get_latest_instrument_spec(symbol.upper()) or InstrumentSpec.fallback(
+        symbol.upper()
+    )
+    result = _run_backtest(
+        settings=settings,
+        symbol=symbol.upper(),
+        interval=interval,
+        candles=candles,
+        instrument=instrument,
+    )
+    payload = result.as_dict()
+    if save:
+        payload["backtest_run_id"] = repository.save_backtest_result(result)
+    _print_json(payload)
+
+
+@app.command("list-backtests")
+def list_backtests(limit: Annotated[int, typer.Option(help="Rows to show")] = 20) -> None:
+    """Show persisted backtest summaries."""
+    settings = _settings()
+    repository = _repo(settings)
+    _print_json(repository.list_backtests(limit=limit))
+
+
+@app.command("list-backtest-fills")
+def list_backtest_fills(
+    run_id: Annotated[str | None, typer.Option(help="Backtest run id")] = None,
+    limit: Annotated[int, typer.Option(help="Rows to show")] = 100,
+) -> None:
+    """Show persisted backtest fills."""
+    settings = _settings()
+    repository = _repo(settings)
+    _print_json(repository.list_backtest_fills(run_id=run_id, limit=limit))
 
 
 @app.command("list-intents")

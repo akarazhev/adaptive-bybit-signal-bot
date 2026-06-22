@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from adaptive_bybit_bot.data.db import create_schema, session_scope
 from adaptive_bybit_bot.data.models import (
     AccountSnapshotRecord,
+    BacktestFillRecord,
+    BacktestRunRecord,
     ExecutionRecord,
     InstrumentSpecRecord,
     MarketFeatureRecord,
@@ -110,6 +112,100 @@ class BotRepository:
 
     def list_instrument_specs(self, limit: int = 20) -> list[dict[str, Any]]:
         return self.list_recent_instrument_specs(limit=limit)
+
+    def save_backtest_result(self, result: Any) -> str:
+        """Persist a backtest summary and fill rows.
+
+        The repository accepts the current candle-level BacktestResult shape and stays
+        tolerant to older result objects used during development.
+        """
+        summary = result.summary_dict() if hasattr(result, "summary_dict") else result.as_dict()
+        config = getattr(result, "config", None)
+        config_json = config.as_dict() if config is not None and hasattr(config, "as_dict") else {}
+        with session_scope(self.engine) as session:
+            run = BacktestRunRecord(
+                symbol=result.symbol,
+                interval=getattr(result, "interval", summary.get("interval", "1")),
+                start_ts=getattr(result, "start_ts", result.started_at),
+                end_ts=getattr(result, "end_ts", result.finished_at),
+                candle_count=getattr(result, "candle_count", getattr(result, "candles", 0)),
+                config_json=_json_safe(config_json),
+                summary_json=_json_safe(summary),
+            )
+            session.add(run)
+            session.flush()
+            for fill in getattr(result, "fills", []):
+                side = getattr(fill, "side", None)
+                side_value = getattr(side, "value", side)
+                session.add(
+                    BacktestFillRecord(
+                        run_id=run.id,
+                        ts=fill.ts,
+                        symbol=fill.symbol,
+                        side=str(side_value),
+                        price=fill.price,
+                        qty=fill.qty,
+                        fee_quote=fill.fee_quote,
+                        realized_pnl_quote=getattr(
+                            fill,
+                            "realized_pnl_quote",
+                            getattr(fill, "pnl_quote", None),
+                        ),
+                        reason_json={
+                            "reason": getattr(fill, "reason", ""),
+                            "intent_id": getattr(fill, "intent_id", ""),
+                        },
+                    )
+                )
+            return run.id
+
+    def list_backtests(self, limit: int = 20) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            rows = session.execute(
+                select(BacktestRunRecord).order_by(desc(BacktestRunRecord.ts)).limit(limit)
+            ).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "ts": row.ts.isoformat() if row.ts else None,
+                    "symbol": row.symbol,
+                    "interval": row.interval,
+                    "start_ts": row.start_ts.isoformat() if row.start_ts else None,
+                    "end_ts": row.end_ts.isoformat() if row.end_ts else None,
+                    "candle_count": row.candle_count,
+                    "summary": row.summary_json,
+                }
+                for row in rows
+            ]
+
+    def list_backtest_fills(
+        self,
+        *,
+        run_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with session_scope(self.engine) as session:
+            stmt = select(BacktestFillRecord)
+            if run_id:
+                stmt = stmt.where(BacktestFillRecord.run_id == run_id)
+            rows = session.execute(
+                stmt.order_by(desc(BacktestFillRecord.ts)).limit(limit)
+            ).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "run_id": row.run_id,
+                    "ts": row.ts.isoformat() if row.ts else None,
+                    "symbol": row.symbol,
+                    "side": row.side,
+                    "price": row.price,
+                    "qty": row.qty,
+                    "fee_quote": row.fee_quote,
+                    "realized_pnl_quote": row.realized_pnl_quote,
+                    "reason": row.reason_json,
+                }
+                for row in rows
+            ]
 
     def save_feature_set(self, features: FeatureSet, *, version: str = "v1") -> str:
         with session_scope(self.engine) as session:

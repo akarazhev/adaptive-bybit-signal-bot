@@ -1,25 +1,37 @@
-.PHONY: test run-once init-db build run shell api refresh-instruments paper-fill-once ws-print
+.PHONY: test init-db run-once run-ws refresh-instruments paper-fill-once ws-print ws-snapshot backtest-fetch backtest-csv api build run shell
 
 test:
 	PYTHONPATH=src pytest
 
 init-db:
-	PYTHONPATH=src adaptive-bybit-bot init-db
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli init-db
 
 run-once:
-	PYTHONPATH=src adaptive-bybit-bot run-once --symbol BTCUSDT
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli run-once --symbol BTCUSDT
+
+run-ws:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli run-ws --symbols BTCUSDT,ETHUSDT
 
 refresh-instruments:
-	PYTHONPATH=src adaptive-bybit-bot refresh-instruments --symbols BTCUSDT,ETHUSDT
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli refresh-instruments --symbols BTCUSDT,ETHUSDT
 
 paper-fill-once:
-	PYTHONPATH=src adaptive-bybit-bot paper-fill-once --symbol BTCUSDT
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli paper-fill-once --symbol BTCUSDT
 
 ws-print:
-	PYTHONPATH=src adaptive-bybit-bot ws-print --symbols BTCUSDT --seconds 30 --orderbook-depth 1
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli ws-print --symbols BTCUSDT --seconds 30 --orderbook-depth 1
+
+ws-snapshot:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli ws-snapshot --symbols BTCUSDT --seconds 10
+
+backtest-fetch:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli backtest-fetch --symbol BTCUSDT --interval 1 --start 2026-06-01 --end 2026-06-02
+
+backtest-csv:
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli backtest-csv --symbol BTCUSDT --input data/klines.csv
 
 api:
-	PYTHONPATH=src adaptive-bybit-bot api --host 0.0.0.0 --port 8080
+	PYTHONPATH=src python -m adaptive_bybit_bot.cli api --host 0.0.0.0 --port 8080
 
 build:
 	podman build -t adaptive-bybit-signal-bot -f Containerfile .

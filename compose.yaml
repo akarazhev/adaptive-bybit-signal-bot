@@ -8,6 +8,15 @@ services:
       - adaptive-bybit-data:/data
     command: ["run", "--symbols", "BTCUSDT,ETHUSDT"]
 
+  ws-shadow:
+    build:
+      context: .
+      dockerfile: Containerfile
+    env_file: .env
+    volumes:
+      - adaptive-bybit-data:/data
+    command: ["run-ws", "--symbols", "BTCUSDT,ETHUSDT"]
+
   api:
     build:
       context: .

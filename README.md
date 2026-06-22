@@ -1,19 +1,39 @@
 # Adaptive Bybit Signal Bot
 
-Read-only / order-intent bot for Bybit spot BTC/ETH. The project analyzes public market data, classifies market regime, validates candidate limit prices against exchange instrument filters, and writes **local order intents** to a database.
+Read-only / order-intent bot for Bybit Spot BTC/ETH. The project analyzes public market data, classifies the market regime, validates candidate limit prices against exchange instrument filters, and writes **local order intents** to a database.
 
 It intentionally **does not place, cancel, amend, transfer, or withdraw** on Bybit. A human or a separate executor can read the database/logs and act externally.
 
-> Engineering scaffold only, not financial advice. Run paper/live-shadow mode first and tune parameters from your own statistics before using real capital.
+> Engineering scaffold only, not financial advice. Run offline backtests and paper/live-shadow mode first, then tune parameters from your own statistics before using real capital.
 
-## Implemented in v0.2
+## Implemented in v0.3
 
-- Public Bybit V5 REST market data:
-  - spot klines
-  - spot orderbook snapshots
-  - spot recent trades
-  - spot `instruments-info` filters
-  - optional derivatives context for the same symbol: funding history and open interest when available
+### Public market data
+
+- Bybit V5 REST market data:
+  - Spot klines
+  - Spot orderbook snapshots
+  - Spot recent trades
+  - Spot `instruments-info` filters
+  - Optional derivatives context for the same symbol: funding history and open interest when available
+- Bybit V5 public Spot WebSocket support:
+  - `tickers.{symbol}`
+  - `publicTrade.{symbol}`
+  - `orderbook.{depth}.{symbol}`
+- Local public WebSocket orderbook accumulator:
+  - applies snapshot/delta updates
+  - deletes price levels when size is `0`
+  - inserts/updates levels from deltas
+  - resets on new snapshot or `u=1`
+  - keeps sorted best bid/ask state per symbol
+- Public WebSocket in-memory market cache:
+  - recent trades per symbol
+  - ticker state
+  - local orderbook state
+  - diagnostics via CLI
+
+### Strategy and ledger
+
 - Instrument metadata ledger:
   - tick size
   - quantity step / base precision
@@ -25,11 +45,6 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
   - sell prices are rounded up to tick size
   - quantities are rounded down to the exchange step
   - invalid local intents are rejected before being written
-- Optional read-only private sync:
-  - API key metadata validation
-  - wallet balance snapshot
-  - open orders snapshot
-  - execution history storage
 - Feature engine:
   - EMA 20/50/200
   - EMA slope
@@ -55,10 +70,6 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
   - `CANCEL_INTENT`
   - `REPRICE_INTENT`
   - `HOLD`
-- Optional paper-fill simulator:
-  - checks active local intents against later public trades/orderbook
-  - can mark local intents as `PAPER_FILLED` or `PAPER_PARTIAL_FILLED`
-  - updates local paper position state
 - Database ledger:
   - market features
   - regimes
@@ -70,9 +81,29 @@ It intentionally **does not place, cancel, amend, transfer, or withdraw** on Byb
   - positions
   - account snapshots
   - executions
-- CLI and small read-only HTTP API
-- Unit tests
+  - backtest runs
+  - backtest fills
+
+### Paper trading and backtesting
+
+- Optional paper-fill simulator:
+  - checks active local intents against later public trades/orderbook
+  - can mark local intents as `PAPER_FILLED` or `PAPER_PARTIAL_FILLED`
+  - updates local paper position state
+- Offline candle-level backtesting:
+  - download Bybit klines to CSV
+  - run backtest from CSV
+  - fetch klines and run backtest in one command
+  - persist backtest summary/fills in DB
+  - includes maker-fee accounting and synthetic spread
+
+### Interfaces and deployment
+
+- CLI commands for data collection, strategy cycles, paper fills, WebSocket diagnostics, backtests, and read-only account sync
+- Small read-only HTTP API
 - Podman-compatible `Containerfile`
+- `compose.yaml` with polling bot, WebSocket shadow bot, and API services
+- Unit tests
 
 ## Safety model
 
@@ -96,11 +127,11 @@ Recommended key setup:
 ## Architecture
 
 ```text
-Bybit public/read-only REST
+Bybit public/read-only REST + public WS
           ↓
-BybitRestClient adapter
+Exchange adapters
           ↓
-MarketSnapshot + InstrumentSpec
+MarketSnapshot + InstrumentSpec + WS cache
           ↓
 FeatureEngine
           ↓
@@ -116,8 +147,8 @@ SQLite/PostgreSQL + logs + API/CLI
 Patterns used:
 
 - **Ports/adapters**: exchange integration is isolated in `exchange/`.
-- **Repository pattern**: DB writes/read queries are isolated in `data/repositories.py`.
-- **Strategy pattern**: market-regime and strategy decision logic are isolated in `strategy/`.
+- **Repository pattern**: database writes/read queries are isolated in `data/repositories.py`.
+- **Strategy pattern**: regime and strategy decision logic are isolated in `strategy/`.
 - **Event ledger**: actions are stored as signal/event records rather than hidden side effects.
 - **Dependency injection**: services receive `settings`, `repository`, and `client` explicitly.
 
@@ -140,13 +171,31 @@ adaptive-bybit-bot list-intents
 ```bash
 cp .env.example .env
 podman build -t adaptive-bybit-signal-bot -f Containerfile .
+```
+
+Initialize DB and instrument filters:
+
+```bash
+podman run --rm --env-file .env -v adaptive-bybit-data:/data adaptive-bybit-signal-bot init-db
+podman run --rm --env-file .env -v adaptive-bybit-data:/data adaptive-bybit-signal-bot refresh-instruments --symbols BTCUSDT,ETHUSDT
+```
+
+One REST polling cycle:
+
+```bash
 podman run --rm --env-file .env -v adaptive-bybit-data:/data adaptive-bybit-signal-bot run-once --symbol BTCUSDT
 ```
 
-Continuous loop:
+Continuous REST polling loop:
 
 ```bash
 podman run --rm --env-file .env -v adaptive-bybit-data:/data adaptive-bybit-signal-bot run --symbols BTCUSDT,ETHUSDT
+```
+
+Public WebSocket shadow loop:
+
+```bash
+podman run --rm --env-file .env -v adaptive-bybit-data:/data adaptive-bybit-signal-bot run-ws --symbols BTCUSDT,ETHUSDT
 ```
 
 HTTP API:
@@ -159,12 +208,14 @@ curl http://localhost:8080/signals
 curl http://localhost:8080/instruments
 curl http://localhost:8080/positions
 curl http://localhost:8080/paper-fills
+curl http://localhost:8080/backtests
 ```
 
 Or with compose:
 
 ```bash
 podman compose up --build bot
+podman compose up --build ws-shadow
 podman compose up --build api
 ```
 
@@ -175,11 +226,44 @@ adaptive-bybit-bot refresh-instruments --symbols BTCUSDT,ETHUSDT
 adaptive-bybit-bot list-instruments
 adaptive-bybit-bot run-once --symbol BTCUSDT
 adaptive-bybit-bot run --symbols BTCUSDT,ETHUSDT
+adaptive-bybit-bot run-ws --symbols BTCUSDT,ETHUSDT
 adaptive-bybit-bot list-signals
 adaptive-bybit-bot list-intents
 adaptive-bybit-bot list-positions
 adaptive-bybit-bot list-paper-fills
-adaptive-bybit-bot ws-print --symbols BTCUSDT --seconds 30
+```
+
+WebSocket diagnostics:
+
+```bash
+adaptive-bybit-bot ws-print --symbols BTCUSDT --seconds 30 --orderbook-depth 1
+adaptive-bybit-bot ws-snapshot --symbols BTCUSDT,ETHUSDT --seconds 10
+adaptive-bybit-bot ws-book --symbols BTCUSDT --seconds 30 --depth 50
+```
+
+Backtesting:
+
+```bash
+adaptive-bybit-bot download-klines \
+  --symbol BTCUSDT \
+  --interval 1 \
+  --start 2026-06-01 \
+  --end 2026-06-02 \
+  --output data/BTCUSDT-1m.csv
+
+adaptive-bybit-bot backtest-csv \
+  --symbol BTCUSDT \
+  --interval 1 \
+  --input data/BTCUSDT-1m.csv
+
+adaptive-bybit-bot backtest-fetch \
+  --symbol BTCUSDT \
+  --interval 1 \
+  --start 2026-06-01 \
+  --end 2026-06-02
+
+adaptive-bybit-bot list-backtests
+adaptive-bybit-bot list-backtest-fills --limit 100
 ```
 
 ## Read-only account sync
@@ -258,6 +342,17 @@ KLINE_LIMIT=240
 ORDERBOOK_LIMIT=50
 RECENT_TRADES_LIMIT=60
 
+WS_ORDERBOOK_DEPTH=50
+WS_EVALUATION_INTERVAL_SECONDS=10
+WS_CANDLE_REFRESH_SECONDS=30
+WS_TRADE_LOOKBACK_SECONDS=120
+WS_MAX_TRADES_PER_SYMBOL=2000
+
+BACKTEST_STARTING_QUOTE=10000
+BACKTEST_WARMUP_CANDLES=240
+BACKTEST_SYNTHETIC_SPREAD_BPS=2
+BACKTEST_FORCE_CLOSE=true
+
 PAPER_TRADING_ENABLED=false
 PAPER_FILL_MODE=trade_through
 PAPER_MIN_FILL_RATIO=1.0
@@ -300,21 +395,22 @@ DATABASE_URL=postgresql+psycopg://bot:bot@postgres:5432/bot
 ```bash
 pip install -e '.[dev]'
 pytest
+python -m compileall -q src tests
+python -m adaptive_bybit_bot.cli --help
 ```
 
 ## Important limitations
 
-1. The default runtime still uses REST polling; the WebSocket client is included for public stream inspection but not yet a full persistent event engine.
-2. Historical backtesting is not implemented yet.
-3. Paper fills are conservative approximations and do not model queue position, hidden/RPI liquidity, or all partial-fill cases.
+1. The WebSocket shadow loop uses public streams only and still refreshes candles from REST.
+2. Candle-level backtesting is an approximation. It does not model queue position, hidden/RPI liquidity, realistic partial fills, or exact intrabar sequencing.
+3. Paper fills are conservative approximations and do not model all exchange microstructure details.
 4. Liquidation WebSocket data is not fully wired into the strategy. Funding and open interest are included as derivatives context only.
 5. The strategy is deliberately conservative and rule-based. Treat it as a baseline to measure, not as a finished alpha model.
 
 ## Suggested next steps
 
-- Add historical backtesting from Bybit historical data.
-- Add persistent WebSocket collectors for lower-latency orderbook/trade streams.
+- Add a persistent raw market-data recorder for WebSocket trades/orderbook deltas.
+- Add a more realistic fill model with queue position and partial fills.
 - Add liquidation WebSocket adapter as context only.
 - Add Telegram notifications for new/cancel/reprice/fill events.
 - Add dashboard with PnL, stuck positions, and signal quality metrics.
-- Add more realistic paper fills: queue model, partial fills, maker/taker fee modes.

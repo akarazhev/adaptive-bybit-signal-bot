@@ -9,6 +9,9 @@ from uuid import uuid4
 
 import websockets
 
+from adaptive_bybit_bot.domain.models import OrderBook
+from adaptive_bybit_bot.market_data.orderbook import LocalOrderBookStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +49,23 @@ class BybitPublicWebSocketClient:
             finally:
                 ping_task.cancel()
                 await asyncio.gather(ping_task, return_exceptions=True)
+
+    async def stream_orderbooks(
+        self,
+        *,
+        symbols: Iterable[str],
+        depth: int = 50,
+    ) -> AsyncIterator[OrderBook]:
+        """Yield local orderbook snapshots maintained from public snapshot/delta messages."""
+        symbol_list = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
+        if not symbol_list:
+            raise ValueError("at least one symbol is required")
+        topics = [f"orderbook.{depth}.{symbol}" for symbol in symbol_list]
+        store = LocalOrderBookStore(symbol_list, depth=depth)
+        async for payload in self.stream(topics):
+            orderbook = store.apply_message(payload)
+            if orderbook is not None:
+                yield orderbook
 
     @staticmethod
     async def _subscribe(websocket: Any, topics: list[str]) -> None:

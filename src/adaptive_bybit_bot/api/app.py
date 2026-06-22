@@ -17,7 +17,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Adaptive Bybit Signal Bot",
-        version="0.2.0",
+        version="0.3.0",
         description="Read-only/order-intent API. No trading endpoint is implemented.",
     )
 
@@ -44,5 +44,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/instruments")
     def instruments(limit: int = 100) -> list[dict[str, Any]]:
         return repository.list_instrument_specs(limit=limit)
+
+    @app.get("/backtests")
+    def backtests(limit: int = 20) -> list[dict[str, Any]]:
+        return repository.list_backtests(limit=limit)
+
+    @app.get("/backtest-fills")
+    def backtest_fills(run_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        return repository.list_backtest_fills(run_id=run_id, limit=limit)
 
     return app

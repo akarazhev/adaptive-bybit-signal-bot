@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -39,6 +39,35 @@ class MarketRegimeRecord(Base):
     regime: Mapped[str] = mapped_column(String(64), index=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     explanation_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class BacktestRunRecord(Base):
+    __tablename__ = "backtest_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    interval: Mapped[str] = mapped_column(String(16), index=True)
+    start_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    end_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    candle_count: Mapped[int] = mapped_column(Integer, default=0)
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class BacktestFillRecord(Base):
+    __tablename__ = "backtest_fills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(ForeignKey("backtest_runs.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    side: Mapped[str] = mapped_column(String(16), index=True)
+    price: Mapped[float] = mapped_column(Float)
+    qty: Mapped[float] = mapped_column(Float)
+    fee_quote: Mapped[float] = mapped_column(Float, default=0.0)
+    realized_pnl_quote: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
 class InstrumentSpecRecord(Base):
