@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -35,3 +38,26 @@ def test_compose_postgres_healthcheck_uses_configured_identity() -> None:
     assert "$${POSTGRES_USER:-bot}" in compose
     assert "$${POSTGRES_DB:-bybit_bot}" in compose
     assert "pg_isready -U bot -d bybit_bot" not in compose
+
+
+def test_starlette_testclient_uses_httpx2_dependency() -> None:
+    pyproject = Path("pyproject.toml").read_text()
+    import_check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import warnings\n"
+                "from starlette.exceptions import StarletteDeprecationWarning\n"
+                "warnings.simplefilter('error', StarletteDeprecationWarning)\n"
+                "import fastapi.testclient\n"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert '"httpx2>=2.4.0"' in pyproject
+    assert importlib.util.find_spec("httpx2") is not None
+    assert import_check.returncode == 0, import_check.stderr
