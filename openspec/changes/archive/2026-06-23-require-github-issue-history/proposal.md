@@ -34,6 +34,6 @@ OpenSpec as the source of technical requirements.
 
 - Affected governance surfaces: `AGENTS.md`, `openspec/config.yaml`,
   `openspec/specs/production-governance/spec.md`, `.github/ISSUE_TEMPLATE`,
-  `.github/pull_request_template.md`, and `doc/spec/10_ECC_CODEX_CONFIGURATION.md`.
+  `.github/pull_request_template.md`, and the Codex configuration spec.
 - No runtime code, API, persistence, compose, exchange adapter, credential, or
   trading-safety behavior changes.
