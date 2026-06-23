@@ -5,6 +5,21 @@ This specification defines how OpenSpec should guide production-ready changes in
 
 ## Requirements
 
+### Requirement: Spec-Driven Development Gates Production-Facing Changes
+Production-facing changes SHALL follow Spec-Driven Development through OpenSpec before implementation.
+
+#### Scenario: SDD-scoped work begins
+- **GIVEN** a change affects behavior, persistence, API, runtime, deployment, safety, or repository governance
+- **WHEN** a developer or agent starts implementation work
+- **THEN** OpenSpec proposal, design, or task artifacts are created or updated before source changes
+- **AND** the artifacts identify safety boundary impact, required tests, verification commands, and documentation updates.
+
+#### Scenario: Non-production maintenance skips a new OpenSpec change
+- **GIVEN** a documentation, formatting, or test-maintenance change does not alter product behavior, production operation, safety guarantees, or governance rules
+- **WHEN** the change is prepared
+- **THEN** a new OpenSpec change is not required
+- **AND** existing source specs remain accurate after the change.
+
 ### Requirement: OpenSpec Artifacts Carry Production Context
 OpenSpec planning artifacts SHALL include project-specific context for the Python stack, Bybit safety boundary, supported runtimes, verification gates, and deployment surfaces.
 

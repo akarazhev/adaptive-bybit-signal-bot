@@ -50,6 +50,22 @@ production safety model.
 - Run `openspec validate --all --strict --no-interactive` before handoff when
   OpenSpec artifacts change.
 
+## Spec-Driven Development (SDD)
+
+SDD is mandatory for production-facing work in this repository. Here, SDD means
+OpenSpec-first development: proposal/design/tasks are created or updated before
+implementation for changes that affect behavior, persistence, API, runtime,
+deployment, safety, or repository governance.
+
+- Required order for SDD-scoped work: read project context, update/create
+  OpenSpec artifacts, write failing tests, implement the smallest safe change,
+  refactor, run verification, then update `doc/spec/` when architecture,
+  safety, runbooks, compose topology, or roadmap behavior changed.
+- Small documentation, formatting, or test-maintenance edits may skip a new
+  OpenSpec change only when they do not alter product behavior, production
+  operation, safety guarantees, or governance rules.
+- If scope is ambiguous, treat it as SDD-scoped and use OpenSpec before editing.
+
 ## Review Guidelines
 
 Codex code review in GitHub should prioritize P0/P1 issues only.
