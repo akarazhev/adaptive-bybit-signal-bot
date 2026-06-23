@@ -9,7 +9,7 @@
 - [x] 2.1 Update `AGENTS.md` with the English GitHub issue history workflow and external write boundary.
 - [x] 2.2 Update the feature request issue template to capture context, goal, non-goals, acceptance criteria, OpenSpec link, PR link, and safety boundaries.
 - [x] 2.3 Update the pull request template so PRs link the GitHub issue and OpenSpec change.
-- [x] 2.4 Update `doc/spec/10_ECC_CODEX_CONFIGURATION.md` with the issue history layer.
+- [x] 2.4 Update the Codex configuration spec with the issue history layer.
 
 ## 3. Verification
 

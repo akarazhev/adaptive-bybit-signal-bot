@@ -42,7 +42,7 @@ CLI entrypoint: adaptive-bybit-bot
 07_CURRENT_ARCHITECTURE.md
 08_NEXT_ROADMAP_V0.7_PLUS.md
 09_CODEX_CLI_HANDOFF.md
-10_ECC_CODEX_CONFIGURATION.md
+10_SUPERPOWERS_CODEX_CONFIGURATION.md
 ```
 
 ## Как использовать с Codex CLI
@@ -53,7 +53,7 @@ CLI entrypoint: adaptive-bybit-bot
 2. `06_v0.6_MARKET_RECORDER_REPLAY.md` — понять последний реализованный инкремент.
 3. `08_NEXT_ROADMAP_V0.7_PLUS.md` — выбрать следующую задачу.
 4. `09_CODEX_CLI_HANDOFF.md` — команды, инварианты, DoD и стиль разработки.
-5. `10_ECC_CODEX_CONFIGURATION.md` — проектная конфигурация ECC/Codex.
+5. `10_SUPERPOWERS_CODEX_CONFIGURATION.md` — проектная конфигурация Superpowers/Codex.
 6. Версионные файлы `01`–`05` — читать при необходимости исторического контекста.
 
 ## Быстрая карта версий

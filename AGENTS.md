@@ -1,4 +1,4 @@
-# Adaptive Bybit Signal Bot - Codex/ECC Instructions
+# Adaptive Bybit Signal Bot - Codex/Superpowers Instructions
 
 This repository is a Python 3.14 read-only/order-intent bot for Bybit Spot
 BTC/ETH. Codex must preserve the production safety boundary: the project reads
@@ -16,24 +16,26 @@ not place, cancel, amend, transfer, or withdraw on Bybit.
   `compose.recorder.yaml`.
 - Tests use pytest; quality tools are ruff and mypy.
 
-## ECC Daily Skills
+## Superpowers Workflow
 
-Project-local ECC skills are installed under `.agents/skills/`.
+Superpowers skills are the active agent workflow surface for this repository.
+Use the relevant Superpowers skill before task actions when a skill applies.
 
-Use these as the default daily surface:
+Default expectations:
 
-- `tdd-workflow` for behavior changes and bug fixes.
-- `verification-loop` before handoff or commit.
-- `python-patterns` and `python-testing` for Python implementation and tests.
-- `fastapi-patterns` and `api-design` for the read-only API.
-- `security-review` and `llm-trading-agent-security` for credentials, financial
-  safety, and any trading-adjacent workflow.
-- `database-migrations` for schema/data-store changes, even though the current
-  project creates schema through SQLAlchemy metadata rather than Alembic.
-- `docker-patterns` and `deployment-patterns` for Containerfile/compose work.
-- `coding-standards` for cross-cutting maintainability.
+- Use Superpowers process skills for brainstorming, plans, implementation,
+  debugging, review, verification, and branch completion when they apply.
+- Use TDD for behavior changes and bug fixes: failing test first, minimal
+  implementation, then refactor.
+- Use verification-before-completion before claiming work is complete.
+- Use systematic-debugging for bugs, test failures, and unexpected behavior.
+- Use security review discipline for credentials, financial safety, and any
+  trading-adjacent workflow.
+- Preserve this repository's OpenSpec-first SDD workflow for production-facing
+  changes even when Superpowers supplies the execution workflow.
 
-Do not add off-stack ECC surfaces to the daily set unless repo evidence changes.
+Do not add project-local agent skill bundles unless repo evidence and user
+approval justify making them part of the active workflow.
 
 ## OpenSpec Workflow
 
