@@ -74,6 +74,14 @@ context encodes the read-only/order-intent Bybit safety invariant, Python/FastAP
 stack, SQLite/PostgreSQL runtime modes, Podman deployment surface, and required
 verification gates.
 
+This repository treats OpenSpec as the mandatory Spec-Driven Development (SDD)
+surface for production-facing work. Changes that affect behavior, persistence,
+API, runtime, deployment, safety, or repository governance must update or create
+OpenSpec proposal/design/task artifacts before implementation begins. Small
+documentation, formatting, or test-maintenance edits can skip a new OpenSpec
+change only when they do not alter product behavior, production operation,
+safety guarantees, or governance rules.
+
 The current OpenSpec CLI verification baseline is `1.4.1`. After upgrading the
 OpenSpec CLI, rerun `openspec update --force` from this repository so the
 generated Codex prompts under `CODEX_HOME`/`~/.codex/prompts` are refreshed.

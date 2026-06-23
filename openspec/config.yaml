@@ -46,6 +46,13 @@ context: |
     default-on in compose.
 
   Production readiness posture:
+  - Spec-Driven Development is mandatory for production-facing work. In this
+    repository, SDD means OpenSpec-first development for changes that affect
+    behavior, persistence, API, runtime, deployment, safety, or repository
+    governance.
+  - SDD-scoped work must update or create proposal/design/task artifacts before
+    implementation, then proceed through failing tests, implementation,
+    refactor, verification, and any required doc/spec updates.
   - Favor measurable strategy quality over adding indicators for their own sake.
   - Preserve SQLite standalone and PostgreSQL compose modes.
   - Keep public-network access out of ordinary unit tests. Use mocks, fixtures,
@@ -62,6 +69,7 @@ context: |
 
 rules:
   proposal:
+    - Treat behavior, persistence, API, runtime, deployment, safety, and repository-governance changes as SDD-scoped work that requires OpenSpec before implementation.
     - State whether the change touches exchange adapters, signing, account sync, order intents, paper trading, persistence, API, compose, recorder/replay, or secrets.
     - Include an explicit "Safety boundary" note for any trading-adjacent change, even when the expected answer is "read-only/order-intent only".
     - Identify user-visible behavior, operational impact, and production rollback considerations.
