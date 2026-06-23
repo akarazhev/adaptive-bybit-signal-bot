@@ -43,9 +43,9 @@ If private Bybit keys are used, they are for read-only validation/account sync o
 ```text
 Project: adaptive-bybit-signal-bot
 Version: 0.6.0
-Python: >= 3.12
+Python: >= 3.14
 CLI: adaptive-bybit-bot
-Default DB: sqlite:///data/bot.db
+Default DB: sqlite:////data/bot.db
 Compose DB: postgresql+psycopg://bot:bot@postgres:5432/bybit_bot
 ```
 
@@ -488,7 +488,7 @@ Recorder is not in default stack to avoid uncontrolled data growth.
 
 ```env
 SYMBOLS=BTCUSDT,ETHUSDT
-DATABASE_URL=sqlite:///data/bot.db
+DATABASE_URL=sqlite:////data/bot.db
 BYBIT_BASE_URL=https://api.bybit.com
 BYBIT_PUBLIC_WS_SPOT_URL=wss://stream.bybit.com/v5/public/spot
 

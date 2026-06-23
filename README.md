@@ -178,6 +178,7 @@ Patterns used:
 
 ```bash
 cp .env.example .env
+# For direct host runs, set DATABASE_URL=sqlite:///./bot.db in .env.
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
@@ -512,6 +513,7 @@ STRATEGY_WRITER_SERVICE=any
 INSTRUMENT_REFRESH_SECONDS=43200
 
 ORDER_QUOTE_USDT=50
+MAX_POSITION_QUOTE_USDT=250
 SPOT_MAKER_FEE_BPS=10
 MIN_NET_PROFIT_BPS=12
 SAFETY_BUFFER_BPS=5
@@ -528,7 +530,7 @@ MIN_EXPECTED_EDGE_BPS=30
 Default DB:
 
 ```env
-DATABASE_URL=sqlite:///data/bot.db
+DATABASE_URL=sqlite:////data/bot.db
 ```
 
 For local non-container usage you may prefer:

@@ -233,7 +233,21 @@ class StrategyEngine:
                 expected_edge_bps=expected_edge_bps,
             )
 
-        adjusted_order_quote = self.risk.order_quote_usdt * sentiment_modifiers.size_multiplier
+        uncapped_order_quote = self.risk.order_quote_usdt * sentiment_modifiers.size_multiplier
+        if self.risk.max_position_quote_usdt <= 0:
+            return SignalDecision.hold(
+                features.symbol,
+                regime.regime,
+                [
+                    f"max_position_quote_non_positive:{self.risk.max_position_quote_usdt:.2f}",
+                    *reasons,
+                ],
+                confidence=regime.confidence,
+                expected_edge_bps=expected_edge_bps,
+            )
+        adjusted_order_quote = min(uncapped_order_quote, self.risk.max_position_quote_usdt)
+        if adjusted_order_quote < uncapped_order_quote:
+            reasons.append(f"max_position_quote_cap:{self.risk.max_position_quote_usdt:.2f}usdt")
         qty = self._normalize_qty(adjusted_order_quote / price)
         validation_errors = self._validate_order(price=price, qty=qty)
         if validation_errors:
@@ -274,6 +288,8 @@ class StrategyEngine:
                 "break_even_bps": self.risk.maker_roundtrip_break_even_bps,
                 "required_edge_bps": required_edge_bps,
                 "base_required_edge_bps": self.risk.required_buy_edge_bps,
+                "uncapped_order_quote_usdt": uncapped_order_quote,
+                "max_position_quote_usdt": self.risk.max_position_quote_usdt,
                 "adjusted_order_quote_usdt": adjusted_order_quote,
                 "vwap_deviation_bps": features.vwap_deviation_bps,
                 "orderbook_imbalance": features.orderbook_imbalance,

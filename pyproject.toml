@@ -7,7 +7,7 @@ name = "adaptive-bybit-signal-bot"
 version = "0.6.0"
 description = "Read-only Bybit spot signal bot that writes order intents to a database instead of placing orders."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = { text = "MIT" }
 authors = [{ name = "OpenAI GPT generated" }]
 dependencies = [
@@ -44,14 +44,14 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
 ignore = ["B008"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 warn_unused_ignores = true
 warn_return_any = true

@@ -73,6 +73,7 @@ mypy src
 
 ```bash
 cp .env.example .env
+# For direct host runs, set DATABASE_URL=sqlite:///./bot.db in .env.
 adaptive-bybit-bot init-db
 adaptive-bybit-bot list-signals
 adaptive-bybit-bot list-intents
@@ -185,7 +186,7 @@ v0.6 baseline:
 Follow existing style:
 
 ```text
-- Python 3.12;
+- Python 3.14;
 - type hints everywhere feasible;
 - dataclasses for domain models;
 - Pydantic settings for config;
