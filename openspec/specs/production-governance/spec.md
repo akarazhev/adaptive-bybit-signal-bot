@@ -21,13 +21,14 @@ Production-facing changes SHALL follow Spec-Driven Development through OpenSpec 
 - **AND** existing source specs remain accurate after the change.
 
 ### Requirement: OpenSpec Artifacts Carry Production Context
-OpenSpec planning artifacts SHALL include project-specific context for the Python stack, Bybit safety boundary, supported runtimes, verification gates, and deployment surfaces.
+OpenSpec planning artifacts SHALL include project-specific context for the Python stack, Bybit safety boundary, supported runtimes, verification gates, deployment surfaces, and the active Superpowers agent workflow.
 
 #### Scenario: A new proposal is created
 - **GIVEN** a developer or agent starts an OpenSpec change
 - **WHEN** proposal, spec, design, or task instructions are requested
 - **THEN** the instructions include the repository's read-only/order-intent safety model
 - **AND** the instructions include the required production verification and deployment considerations.
+- **AND** active agent-workflow guidance points to Superpowers.
 
 ### Requirement: GitHub Issues Capture Project Evolution
 SDD-scoped feature and production-facing work SHALL start from a GitHub issue or an explicitly prepared issue draft before implementation. The issue or draft MUST capture human-readable context, goal, non-goals, safety invariants, acceptance criteria, and links to the related OpenSpec change and pull request when those artifacts exist. Remote issue creation or updates MUST NOT be performed by an agent without explicit user approval.
@@ -108,3 +109,15 @@ Codex review in GitHub SHALL use repository guidance that focuses on serious saf
 - **WHEN** Codex reviews the pull request
 - **THEN** it follows the Review Guidelines in `AGENTS.md`
 - **AND** it prioritizes issues that could violate the read-only/order-intent boundary, expose secrets, break persistence modes, weaken API safety, or remove required verification.
+
+### Requirement: Repository Agent Guidance Uses AGENTS Contract
+Repository-local agent guidance SHALL be centralized in `AGENTS.md` and OpenSpec
+rather than requiring a tracked `.codex/` configuration directory.
+
+#### Scenario: Agent starts work in the repository
+- **GIVEN** an agent or maintainer inspects repository-local guidance
+- **WHEN** they review the active workflow surfaces
+- **THEN** `AGENTS.md` provides the repository operating contract
+- **AND** OpenSpec provides the SDD planning contract
+- **AND** the repository does not require tracked `.codex/config.toml` or
+  `.codex/agents/*.toml` files for normal operation.
