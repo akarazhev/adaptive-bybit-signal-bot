@@ -7,22 +7,60 @@ body:
   - type: markdown
     attributes:
       value: |
-        For behavior, API, persistence, runtime, deployment, or safety changes,
-        expect an OpenSpec proposal before implementation.
+        Use this issue as the human-readable history for feature and
+        production-facing work. For behavior, API, persistence, runtime,
+        deployment, safety, or repository-governance changes, create or link an
+        OpenSpec change before implementation.
   - type: textarea
-    id: problem
+    id: context
     attributes:
-      label: Problem or opportunity
-      description: What should improve and why now?
+      label: Context
+      description: What problem, opportunity, or project-evolution context led to this request?
     validations:
       required: true
   - type: textarea
-    id: proposal
+    id: goal
     attributes:
-      label: Proposed behavior
-      description: Describe the user-visible behavior or operational outcome.
+      label: Goal
+      description: What should be true when this is done?
     validations:
       required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What is intentionally out of scope?
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable checks for completion.
+      placeholder: |
+        - [ ] OpenSpec change created or linked
+        - [ ] Failing tests added first where behavior changes
+        - [ ] Implementation completed
+        - [ ] Verification passed
+        - [ ] Documentation updated if required
+    validations:
+      required: true
+  - type: input
+    id: openspec
+    attributes:
+      label: OpenSpec change
+      description: Link or name the OpenSpec change when it exists.
+      placeholder: require-example-change
+    validations:
+      required: false
+  - type: input
+    id: pull_request
+    attributes:
+      label: Pull request
+      description: Link the PR when it exists.
+      placeholder: "#123"
+    validations:
+      required: false
   - type: checkboxes
     id: boundaries
     attributes:
@@ -31,4 +69,6 @@ body:
         - label: This does not require direct Bybit order placement, cancellation, amendment, transfer, withdrawal, or leverage execution.
           required: true
         - label: This can be planned with OpenSpec before implementation.
+          required: true
+        - label: This issue can be used to track milestone updates such as OpenSpec created, tests added, implementation complete, verification passed, and docs updated.
           required: true

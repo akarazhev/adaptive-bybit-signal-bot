@@ -66,6 +66,26 @@ deployment, safety, or repository governance.
   operation, safety guarantees, or governance rules.
 - If scope is ambiguous, treat it as SDD-scoped and use OpenSpec before editing.
 
+## GitHub Issue History
+
+Use GitHub issues as the human-readable project history layer for SDD-scoped
+feature and production-facing work. OpenSpec remains the technical contract;
+the issue records why the work exists and how the decision evolved.
+
+- Before implementation, link an existing GitHub issue or prepare a new issue
+  draft for SDD-scoped work.
+- Write issue content in English and include context, goal, non-goals, safety
+  invariants, acceptance criteria, and links to the OpenSpec change and PR when
+  those artifacts exist.
+- Track meaningful milestone updates in the issue or PR conversation, such as
+  OpenSpec created, tests added, implementation complete, verification passed,
+  and docs updated.
+- Do not create or update remote GitHub issues without explicit user approval;
+  if approval or authentication is unavailable, prepare the issue body locally
+  or in the handoff instead.
+- Small documentation, formatting, or test-maintenance edits that are allowed
+  to skip a new OpenSpec change may also skip a GitHub issue.
+
 ## Review Guidelines
 
 Codex code review in GitHub should prioritize P0/P1 issues only.
@@ -108,18 +128,21 @@ Codex code review in GitHub should prioritize P0/P1 issues only.
 1. Read `README.md`, `pyproject.toml`, `doc/spec/07_CURRENT_ARCHITECTURE.md`,
    `doc/spec/08_NEXT_ROADMAP_V0.7_PLUS.md`, and
    `doc/spec/09_CODEX_CLI_HANDOFF.md` before feature work.
-2. Plan changes before editing when behavior spans strategy, persistence, API,
+2. Link an existing GitHub issue or prepare an English issue draft for
+   SDD-scoped feature and production-facing work.
+3. Plan changes before editing when behavior spans strategy, persistence, API,
    compose services, or safety rules.
-3. Use TDD for bug fixes and new behavior: failing test first, minimal
+4. Use OpenSpec before implementation for SDD-scoped work.
+5. Use TDD for bug fixes and new behavior: failing test first, minimal
    implementation, then refactor.
-4. Preserve existing module boundaries:
+6. Preserve existing module boundaries:
    - `exchange/` isolates Bybit REST/WS adapters.
    - `features/`, `strategy/`, and `sentiment/` stay calculation-oriented.
    - `data/repositories.py` owns persistence workflows.
    - `services/` owns runtime orchestration.
    - `api/` remains read-only presentation.
-5. Keep changes small and focused. Avoid unrelated refactors or formatting churn.
-6. Update `doc/spec/` when changing architecture, safety guarantees, runbooks,
+7. Keep changes small and focused. Avoid unrelated refactors or formatting churn.
+8. Update `doc/spec/` when changing architecture, safety guarantees, runbooks,
    compose topology, or the roadmap.
 
 ## Verification Commands

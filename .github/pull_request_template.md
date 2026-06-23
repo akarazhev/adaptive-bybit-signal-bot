@@ -2,6 +2,12 @@
 
 -
 
+## GitHub Issue
+
+- Closes:
+- OpenSpec change:
+- Issue history updated:
+
 ## OpenSpec
 
 - [ ] Change is covered by existing `openspec/specs/`

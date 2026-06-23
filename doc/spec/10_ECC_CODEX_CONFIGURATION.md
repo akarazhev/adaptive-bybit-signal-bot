@@ -96,6 +96,30 @@ Use `/opsx:propose` or the equivalent OpenSpec CLI workflow before implementatio
 so proposals, specs, designs, and tasks inherit the repository safety and
 production-readiness rules.
 
+## GitHub Issue History Layer
+
+GitHub issues are the human-readable history layer for SDD-scoped feature and
+production-facing work. Before implementation begins, create or link a GitHub
+issue, or prepare an English issue draft when remote GitHub writes are not
+approved or authenticated.
+
+The issue or draft should capture:
+
+- context and motivation;
+- goal and non-goals;
+- safety invariants;
+- acceptance criteria;
+- links to the OpenSpec change and pull request when they exist;
+- milestone updates such as OpenSpec created, tests added, implementation
+  complete, verification passed, and docs updated.
+
+OpenSpec remains the technical contract. The issue explains why the change
+exists and preserves the project-evolution trail for human maintainers.
+
+Agents must not create or update remote GitHub issues without explicit user
+approval for that external write action. When approval is absent, they should
+draft the issue body locally or include it in the handoff.
+
 ## GitHub/Codex Production Configuration
 
 The repository-local GitHub configuration is designed to be safe without remote

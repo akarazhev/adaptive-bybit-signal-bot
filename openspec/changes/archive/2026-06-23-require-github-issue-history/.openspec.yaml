@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-06-23
+goal: Make feature history and project evolution traceable for human maintainers
+  without replacing OpenSpec.

@@ -50,6 +50,12 @@ context: |
     repository, SDD means OpenSpec-first development for changes that affect
     behavior, persistence, API, runtime, deployment, safety, or repository
     governance.
+  - SDD-scoped feature and production-facing work should have a GitHub issue or
+    explicit issue draft before implementation. The issue is the human context
+    and project-evolution record; OpenSpec remains the technical contract.
+  - Creating or updating a remote GitHub issue is an external write action and
+    requires explicit user approval. Without approval, prepare the issue body as
+    a local draft or handoff artifact.
   - SDD-scoped work must update or create proposal/design/task artifacts before
     implementation, then proceed through failing tests, implementation,
     refactor, verification, and any required doc/spec updates.
@@ -70,6 +76,9 @@ context: |
 rules:
   proposal:
     - Treat behavior, persistence, API, runtime, deployment, safety, and repository-governance changes as SDD-scoped work that requires OpenSpec before implementation.
+    - For SDD-scoped feature and production-facing work, link an existing GitHub issue or prepare an issue draft before implementation.
+    - The issue or draft must record human-readable context, goal, non-goals, safety invariants, acceptance criteria, and links to the OpenSpec change and PR when available.
+    - Do not create or update remote GitHub issues from an agent without explicit user approval; draft locally when approval is absent.
     - State whether the change touches exchange adapters, signing, account sync, order intents, paper trading, persistence, API, compose, recorder/replay, or secrets.
     - Include an explicit "Safety boundary" note for any trading-adjacent change, even when the expected answer is "read-only/order-intent only".
     - Identify user-visible behavior, operational impact, and production rollback considerations.
@@ -90,6 +99,7 @@ rules:
     - Prefer existing module boundaries and repository/service abstractions over new cross-cutting shortcuts.
   tasks:
     - Include failing tests before behavior changes, then implementation, then refactor/cleanup.
+    - Include GitHub issue linkage for SDD-scoped work, PR/OpenSpec cross-links, and any required issue history updates.
     - Include PYTHONPATH=src pytest, python -m compileall -q src tests, ruff check ., and mypy src as handoff checks unless explicitly out of scope.
     - Add podman build -t adaptive-bybit-signal-bot -f Containerfile . and podman compose config when deployment files change.
     - Add GitHub workflow validation, least-privilege permission review, and secret exposure review when .github workflows change.
