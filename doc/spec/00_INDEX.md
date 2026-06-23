@@ -18,7 +18,7 @@
 
 ```text
 adaptive-bybit-signal-bot 0.6.0
-Python >= 3.12
+Python >= 3.14
 CLI entrypoint: adaptive-bybit-bot
 ```
 

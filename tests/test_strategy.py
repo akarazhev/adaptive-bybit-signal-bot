@@ -58,6 +58,29 @@ def test_strategy_creates_buy_intent_when_edge_covers_costs() -> None:
     assert decision.qty is not None and decision.qty > 0
 
 
+def test_strategy_caps_buy_intent_quote_to_max_position_quote() -> None:
+    max_position_quote = 250.0
+    engine = StrategyEngine(
+        RiskConfig(
+            order_quote_usdt=1_000.0,
+            max_position_quote_usdt=max_position_quote,
+            min_expected_edge_bps=30,
+        )
+    )
+
+    decision = engine.evaluate(
+        features=make_features(),
+        regime=RegimeAssessment(Regime.RANGE, 0.75, ["test_range"]),
+        position=PositionState(symbol="BTCUSDT"),
+    )
+
+    assert decision.action == SignalAction.BUY_INTENT
+    assert decision.price is not None
+    assert decision.qty is not None
+    assert decision.price * decision.qty <= max_position_quote
+    assert decision.metadata["max_position_quote_usdt"] == max_position_quote
+
+
 def test_strategy_holds_when_edge_too_small() -> None:
     engine = StrategyEngine(RiskConfig(min_expected_edge_bps=60))
     decision = engine.evaluate(

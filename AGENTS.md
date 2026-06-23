@@ -1,13 +1,13 @@
 # Adaptive Bybit Signal Bot - Codex/ECC Instructions
 
-This repository is a Python 3.12 read-only/order-intent bot for Bybit Spot
+This repository is a Python 3.14 read-only/order-intent bot for Bybit Spot
 BTC/ETH. Codex must preserve the production safety boundary: the project reads
 public/read-only data, computes signals, and writes local order intents. It must
 not place, cancel, amend, transfer, or withdraw on Bybit.
 
 ## Project Stack
 
-- Python 3.12 package under `src/adaptive_bybit_bot`.
+- Python 3.14 package under `src/adaptive_bybit_bot`.
 - Typer CLI entrypoint: `adaptive-bybit-bot`.
 - FastAPI read-only HTTP API in `src/adaptive_bybit_bot/api`.
 - SQLAlchemy persistence with SQLite standalone mode and PostgreSQL compose mode.

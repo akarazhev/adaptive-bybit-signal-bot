@@ -6,7 +6,7 @@ This document records the project-specific ECC install decision for Codex.
 
 | Evidence | Meaning |
 |---|---|
-| `pyproject.toml` declares Python `>=3.12`, hatchling, pytest, ruff, mypy | Python service with typed quality gates |
+| `pyproject.toml` declares Python `>=3.14`, hatchling, pytest, ruff, mypy | Python service with typed quality gates |
 | `pyproject.toml` dependencies include FastAPI, Typer, SQLAlchemy, pydantic-settings, httpx, websockets | CLI/API/data/exchange service |
 | `README.md` and `doc/spec/09_CODEX_CLI_HANDOFF.md` state read-only/order-intent safety rules | Safety-critical trading-adjacent repo |
 | `Containerfile`, `compose.yaml`, `compose.rest.yaml`, `compose.recorder.yaml` | Podman container and compose deployment |

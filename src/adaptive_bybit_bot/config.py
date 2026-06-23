@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     bybit_recv_window: int = 5000
     bybit_allow_read_write_key: bool = False
 
-    database_url: str = "sqlite:///data/bot.db"
+    database_url: str = "sqlite:////data/bot.db"
     db_wait_timeout_seconds: int = 60
     db_wait_interval_seconds: float = 2.0
 

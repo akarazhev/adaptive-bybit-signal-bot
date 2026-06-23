@@ -4,7 +4,7 @@ context: |
   Project: adaptive-bybit-signal-bot v0.6.0.
 
   Purpose:
-  - Python 3.12 read-only/order-intent bot for Bybit Spot BTC/ETH.
+  - Python 3.14 read-only/order-intent bot for Bybit Spot BTC/ETH.
   - The system reads public/read-only market data, computes regimes/signals,
     writes local order intents, and supports paper/backtest/replay workflows.
   - The system is not a live exchange executor and must not become one through
