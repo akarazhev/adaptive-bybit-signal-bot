@@ -14,7 +14,8 @@ and makes the project harder to operate consistently.
   workflow guidance.
 - Replace the legacy Codex configuration spec with a Superpowers/Codex
   configuration spec.
-- Keep `.codex/` as the project-local Codex configuration directory.
+- Remove the previous `.codex/` project-local configuration surface in a
+  follow-up governance cleanup.
 - Preserve OpenSpec-first SDD, GitHub issue-history rules, verification gates,
   and the read-only/order-intent Bybit safety boundary.
 

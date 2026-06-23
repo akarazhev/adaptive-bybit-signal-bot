@@ -1,7 +1,7 @@
 # Superpowers/Codex Configuration
 
-This document records the project-specific Superpowers and Codex configuration
-for `adaptive-bybit-signal-bot`.
+This document records the project-specific Superpowers workflow and Codex review
+configuration for `adaptive-bybit-signal-bot`.
 
 ## Stack Evidence
 
@@ -31,12 +31,12 @@ The daily workflow expectations are:
 
 Project-local legacy skill bundles are not part of this repository. Do not
 restore one unless the user explicitly approves a new agent-surface decision.
+Repository-local Codex behavior is guided by `AGENTS.md`; no tracked `.codex/`
+directory is required or installed.
 
 ## Installed Files
 
 - `AGENTS.md` - project operating contract for Codex and Superpowers.
-- `.codex/config.toml` - project-local Codex defaults, MCP servers, and agent roles.
-- `.codex/agents/*.toml` - read-only explorer/reviewer/docs-researcher roles.
 - `openspec/config.yaml` - project-specific OpenSpec context and artifact rules
   for production-ready planning.
 - `openspec/specs/*/spec.md` - source specifications for the trading safety
@@ -103,8 +103,8 @@ draft the issue body locally or include it in the handoff.
 
 ## GitHub/Codex Production Configuration
 
-The repository-local GitHub configuration is designed to be safe without remote
-administrator state:
+The repository-local GitHub and Codex review configuration is designed to be
+safe without remote administrator state:
 
 - CI runs offline-safe validation and does not use live Bybit or Alternative.me
   access.
