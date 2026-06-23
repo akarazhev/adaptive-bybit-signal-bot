@@ -9,7 +9,8 @@ Goals:
 
 - Remove legacy skill files and active references.
 - Document Superpowers as the active skill workflow.
-- Keep `.codex/` project-local configuration.
+- Keep Codex guidance in `AGENTS.md`; remove the old `.codex/` project-local
+  configuration surface in a follow-up governance cleanup.
 - Preserve all trading safety, SDD, issue-history, and verification rules.
 
 Non-goals:

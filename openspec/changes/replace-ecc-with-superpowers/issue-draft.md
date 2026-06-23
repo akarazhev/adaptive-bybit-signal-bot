@@ -34,7 +34,8 @@ preserving all production safety and governance rules.
 - Project-local legacy skill files are removed.
 - Active docs no longer instruct agents to use the legacy skill surface.
 - Superpowers is documented as the active skill workflow.
-- `.codex/` remains the project-local Codex configuration directory.
+- Codex guidance remains centralized in `AGENTS.md`; the old `.codex/`
+  project-local configuration surface can be removed separately.
 - OpenSpec validates, or unavailable tooling is reported.
 
 ## Links

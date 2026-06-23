@@ -1,7 +1,8 @@
 ## 1. Planning
 
 - [x] 1.1 Confirm scope: remove legacy skill files and active references completely.
-- [x] 1.2 Preserve `.codex/` as project-local Codex configuration.
+- [x] 1.2 Preserve Codex guidance in `AGENTS.md` while allowing the old
+  `.codex/` project-local configuration surface to be removed separately.
 - [x] 1.3 Prepare local issue draft instead of creating a remote GitHub issue.
 
 ## 2. Documentation And Configuration
